@@ -33,6 +33,8 @@ VERIFIED_ITEMS = {
 
     # Home & Kitchen
     "LOLOI_ACCENT_RUG": {"id": "paB0CRLY5MYP", "brand": "Loloi", "cat": "Home", "price": 81.0},
+    "YANKEE_CANDLE": {"id": "paB0CT5G2N3D", "brand": "Yankee Candle", "cat": "Home", "price": 28.0},
+    "KEURIG_COFFEE": {"id": "paB0CPXXWZGW", "brand": "Keurig", "cat": "Home", "price": 80.0},
 }
 
 
@@ -76,7 +78,8 @@ class SyntheticHistoryGenerator:
             ],
             "home": [
                 VERIFIED_ITEMS["LOLOI_ACCENT_RUG"]["id"],
-                VERIFIED_ITEMS["TIMBERLAND_BOOT"]["id"],
+                VERIFIED_ITEMS["YANKEE_CANDLE"]["id"],
+                VERIFIED_ITEMS["KEURIG_COFFEE"]["id"],
             ],
         }
 
@@ -99,9 +102,19 @@ class SyntheticHistoryGenerator:
                 pool = cat_items["athletic"] + cat_items["tech"]
 
             for step in range(seq_len):
-                # 80% viewItem, 20% addToCart
+                # 70% viewItem, 30% addToCart
                 act_type = ActionType.VIEW_ITEM if rng.random() > 0.3 else ActionType.ADD_TO_CART
-                chosen_item = rng.choice(pool)
+
+                if arch_key == "CROSS_SHOPPER":
+                    # Guarantee category crossing: first from athletic, last from tech
+                    if step == 0:
+                        chosen_item = rng.choice(cat_items["athletic"])
+                    elif step == seq_len - 1:
+                        chosen_item = rng.choice(cat_items["tech"])
+                    else:
+                        chosen_item = rng.choice(pool)
+                else:
+                    chosen_item = rng.choice(pool)
 
                 action = BehavioralAction(
                     action_id=f"{history_id}_act_{step + 1}",

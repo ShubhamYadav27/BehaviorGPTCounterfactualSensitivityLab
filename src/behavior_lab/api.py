@@ -61,7 +61,21 @@ def _load_results() -> List[Dict[str, Any]]:
 
 @app.get("/api/summary")
 def get_summary():
-    return _load_summary()
+    """Return experiment summary with explicit labeling for unverified local metadata."""
+    summary = _load_summary()
+    summary["metadata_provenance"] = {
+        "model_name_status": "unverified_local_descriptor",
+        "catalog_id_status": "unverified_local_descriptor",
+        "note": (
+            "The model version ('BehaviorGPT-v4-12.5B') and catalog identifier "
+            "('retail_catalog_500k') are local descriptor labels based on public "
+            "marketing materials. They are not confirmed by server response metadata "
+            "from the public showcase endpoint."
+        ),
+    }
+    summary["is_model_name_verified"] = False
+    summary["is_catalog_id_verified"] = False
+    return summary
 
 
 @app.get("/api/cases")
@@ -126,7 +140,7 @@ def get_investigation():
     return {
         "reports": reports,
         "markdown_analysis": md_content,
-        "investigated_cases": ["case_004 (Early Position Sensitivity)", "case_003 (Action Verb Invariance)"],
+        "investigated_cases": list(reports.keys()),
     }
 
 
@@ -139,7 +153,11 @@ class InteractiveHistoryRequest(BaseModel):
 
 @app.post("/api/run-interactive")
 def run_interactive(req: InteractiveHistoryRequest):
-    """Run interactive live counterfactual comparison between two sequences."""
+    """Run interactive live counterfactual comparison between two sequences.
+
+    Returns HTTP 502 Bad Gateway if either sequence's upstream inference fails,
+    avoiding the calculation of false zero-valued sensitivity metrics.
+    """
     client = BehaviorGPTClient(mode="live", market=req.market)
 
     hist_a = BehavioralHistory(
@@ -174,15 +192,50 @@ def run_interactive(req: InteractiveHistoryRequest):
         created_at="2026-10-15T00:00:00Z",
     )
 
-    out_a = client.predict(hist_a, limit=req.limit, variant_label="Sequence A")
-    out_b = client.predict(hist_b, limit=req.limit, variant_label="Sequence B")
-    metrics = SensitivityMetricsCalculator.compute(out_a, out_b)
+    try:
+        try:
+            out_a = client.predict(hist_a, limit=req.limit, variant_label="Sequence A")
+        except Exception as ex:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Upstream showcase endpoint connection failed for Sequence A: {type(ex).__name__}",
+            )
 
-    return {
-        "sequence_a_output": out_a.model_dump(),
-        "sequence_b_output": out_b.model_dump(),
-        "metrics": metrics.model_dump(),
-    }
+        if out_a.status_code != 200 or out_a.error_message:
+            msg = "Upstream showcase endpoint returned non-success response for Sequence A"
+            if out_a.status_code:
+                msg += f" (status {out_a.status_code})"
+            if out_a.error_message:
+                first_line = out_a.error_message.split("\n")[0][:120]
+                msg += f": {first_line}"
+            raise HTTPException(status_code=502, detail=msg)
+
+        try:
+            out_b = client.predict(hist_b, limit=req.limit, variant_label="Sequence B")
+        except Exception as ex:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Upstream showcase endpoint connection failed for Sequence B: {type(ex).__name__}",
+            )
+
+        if out_b.status_code != 200 or out_b.error_message:
+            msg = "Upstream showcase endpoint returned non-success response for Sequence B"
+            if out_b.status_code:
+                msg += f" (status {out_b.status_code})"
+            if out_b.error_message:
+                first_line = out_b.error_message.split("\n")[0][:120]
+                msg += f": {first_line}"
+            raise HTTPException(status_code=502, detail=msg)
+
+        metrics = SensitivityMetricsCalculator.compute(out_a, out_b)
+
+        return {
+            "sequence_a_output": out_a.model_dump(),
+            "sequence_b_output": out_b.model_dump(),
+            "metrics": metrics.model_dump(),
+        }
+    finally:
+        client.close()
 
 
 @app.get("/", response_class=HTMLResponse)

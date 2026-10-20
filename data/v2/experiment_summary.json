@@ -1,0 +1,70 @@
+{
+  "experiment_id": "exp_20261015_152810",
+  "timestamp": "2026-10-15T15:28:10.408027+00:00",
+  "total_cases": 40,
+  "successful_cases": 40,
+  "failed_cases": 0,
+  "model_name": "BehaviorGPT-v4-12.5B",
+  "catalog_id": "retail_catalog_500k",
+  "execution_mode": "mock",
+  "top1_change_rate": 0.0,
+  "avg_jaccard_top5": 1.0,
+  "avg_jaccard_top10": 1.0,
+  "avg_rank_displacement": 0.0,
+  "avg_prob_tvd": 0.0,
+  "by_mutation_type": {
+    "cross_category_swap": {
+      "count": 10.0,
+      "top1_flips": 0.0,
+      "sum_j5": 10.0,
+      "sum_disp": 0.0,
+      "top1_flip_rate": 0.0,
+      "avg_jaccard_5": 1.0,
+      "avg_displacement": 0.0
+    },
+    "within_category_swap": {
+      "count": 10.0,
+      "top1_flips": 0.0,
+      "sum_j5": 10.0,
+      "sum_disp": 0.0,
+      "top1_flip_rate": 0.0,
+      "avg_jaccard_5": 1.0,
+      "avg_displacement": 0.0
+    },
+    "action_type_swap": {
+      "count": 10.0,
+      "top1_flips": 0.0,
+      "sum_j5": 10.0,
+      "sum_disp": 0.0,
+      "top1_flip_rate": 0.0,
+      "avg_jaccard_5": 1.0,
+      "avg_displacement": 0.0
+    },
+    "mutation_position_early": {
+      "count": 10.0,
+      "top1_flips": 0.0,
+      "sum_j5": 10.0,
+      "sum_disp": 0.0,
+      "top1_flip_rate": 0.0,
+      "avg_jaccard_5": 1.0,
+      "avg_displacement": 0.0
+    }
+  },
+  "by_position": {
+    "late": {
+      "count": 30.0,
+      "top1_flips": 0.0,
+      "sum_j5": 30.0,
+      "top1_flip_rate": 0.0,
+      "avg_jaccard_5": 1.0
+    },
+    "early": {
+      "count": 10.0,
+      "top1_flips": 0.0,
+      "sum_j5": 10.0,
+      "top1_flip_rate": 0.0,
+      "avg_jaccard_5": 1.0
+    }
+  },
+  "investigated_case_id": "case_001"
+}

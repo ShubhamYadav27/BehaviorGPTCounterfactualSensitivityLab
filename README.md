@@ -5,13 +5,13 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests: 13 Passed](https://img.shields.io/badge/tests-13%20passed-success.svg)](tests/)
-[![Inference: Live BehaviorGPT](https://img.shields.io/badge/inference-BehaviorGPT--v4--12.5B-blueviolet.svg)](https://unboxai.com/behaviorgpt)
+[![Inference: BehaviorGPT Showcase](https://img.shields.io/badge/inference-BehaviorGPT%20Showcase-blueviolet.svg)](https://behaviorgpt.unboxai.com)
 
 ---
 
 ## 1. Project Overview & Research Question
 
-**BehaviorGPT** is Unbox AI's 12.5B-parameter Large Behavioral Model (LBM), pretrained on 150 billion chronological user actions across retail, payments, and engagement. Rather than predicting text tokens, it models user intent directly from chronological event sequences (views, cart additions, searches, and purchases) to rank entire catalogs in a single forward pass.
+**BehaviorGPT** is Unbox AI's Large Behavioral Model (LBM). According to Unbox AI's marketing materials, it was pretrained on 150 billion chronological user actions across retail, payments, and engagement. Rather than predicting text tokens, it models user intent directly from chronological event sequences (views, cart additions, searches, and purchases) to rank entire catalogs in a single forward pass. The model version ("v4-12.5B") and parameter count cited in this project are from public marketing materials and have not been independently verified.
 
 This research prototype systematically addresses the question:
 
@@ -24,7 +24,7 @@ We measure and quantify **model sensitivity and representation dynamics**. This 
 
 ## 2. Key Empirical Findings (40 Paired Inferences)
 
-Across **40 strictly paired counterfactual experiments** (80 live model inferences evaluated against `retail_catalog_500k` on BehaviorGPT-v4):
+Across **40 strictly paired counterfactual experiments** (80 inferences via the public BehaviorGPT showcase endpoint):
 
 | Metric | Overall Suite | Action-Verb Swap (`view` $\leftrightarrow$ `cart`) | Within-Category Swap | Cross-Category Swap | Early Position (Index 0) |
 |---|---|---|---|---|---|
@@ -35,9 +35,9 @@ Across **40 strictly paired counterfactual experiments** (80 live model inferenc
 | **Mean Rank Drift** | **1.83 ranks** | **0.24 ranks** | **2.11 ranks** | **2.25 ranks** | **2.73 ranks** |
 
 ### Core Insights:
-1. **Action-Verb Semantic Dominance:** Changing *only* the user action verb (`viewItem` $\to$ `addToCart`) on the same product produced a **90.0% Top-1 invariance rate** and **90.0% Top-5 candidate overlap**. In next-action completion, the underlying item representation overwhelmingly dominates the action verb.
+1. **Action-Verb Stability:** Changing *only* the user action verb (`viewItem` $\to$ `addToCart`) on the same product produced a **90.0% Top-1 invariance rate** and **90.0% Top-5 candidate overlap**. This suggests item identity has a stronger influence on predictions than the action type, for this dataset.
 2. **Fine-Grained Item Sensitivity:** Swapping an item within the exact same category (e.g. Nike Jordan 4 $\to$ Nike Dunk) flipped Top-1 predictions **70.0%** of the time, demonstrating high intra-category resolution.
-3. **Opening Anchor Effect (Primacy):** Mutating the initial action (index 0) in 6-action histories flipped Top-1 predictions **100.0%** of the time (Jaccard@5 dropped to 11.5%), showing that opening events establish a persistent categorical manifold that guides subsequent attention.
+3. **Opening Position Sensitivity:** Mutating the initial action (index 0) in 6-action histories flipped Top-1 predictions **100.0%** of the time (Jaccard@5 dropped to 11.5%). The model's output was highly sensitive to changes at the opening position.
 
 ---
 
@@ -46,7 +46,7 @@ Across **40 strictly paired counterfactual experiments** (80 live model inferenc
 ```
 BehaviorGPT Counterfactual Sensitivity Lab
 ├── src/behavior_lab/
-│   ├── client.py              # Typed client adapter (Live, Cloud, and Mock modes)
+│   ├── client.py              # Typed client adapter (Live showcase and Mock modes)
 │   ├── dataset_generator.py   # Deterministic synthetic behavioral sequence generator
 │   ├── mutator.py             # Controlled single-action mutator with invariant checks
 │   ├── metrics.py             # Mathematical sensitivity metrics (Jaccard, TVD, Rank Drift)
@@ -102,9 +102,11 @@ python scripts/run_experiment.py --mode live --count 40 --seed 42
 *Executes 80 genuine forward passes on BehaviorGPT-v4, serializing results to `data/`.*
 
 ### 4. Launch the Interactive Research Workbench & Dashboard
-```bash
-python -m uvicorn behavior_lab.api:app --host 127.0.0.1 --port 8000
+```powershell
+$env:PYTHONPATH = "src"; python -m uvicorn behavior_lab.api:app --host 127.0.0.1 --port 8000
 ```
+
+> **Note (Windows/PowerShell):** The `$env:PYTHONPATH = "src"` prefix is required so Python can locate the `behavior_lab` package under `src/`.
 Open your browser to:
 👉 **`http://127.0.0.1:8000/`**
 
@@ -119,7 +121,7 @@ Open your browser to:
 
 ### Case Study 2: The Opening Anchor Effect (`case_004`)
 - **Sequence:** 6 actions browsing footwear.
-- **Intervention:** Action at index 0 changed from Timberland Boot (`paB0CN9GKZ2W`) to Coach Tabby Shoulder Bag (`paB0D8CSSQ7J`). All 5 subsequent actions remained Timberland boot clicks.
+- **Intervention:** Action at index 0 changed from Timberland Boot (`paB0CPSK1GVB`) to Coach Tabby Shoulder Bag (`paB0D8CSSQ7J`). All 5 subsequent actions remained Timberland boot interactions.
 - **Empirical Output:** Predictions shifted from 100% Timberland boots to Coach luxury shoulder bags ($371 - $450) and UGG fashion boots. Top-1 Flip: **True**, Jaccard@5: **0.00%**, Price Delta: **+$148.00**.
 
 ---
@@ -143,4 +145,4 @@ Open your browser to:
 
 ## 8. License
 
-This project is licensed under the MIT License. Built around Unbox AI's official open-source BehaviorGPT SDK.
+This project is licensed under the MIT License. Built as an independent research experiment using Unbox AI's public BehaviorGPT showcase endpoint. The official BehaviorGPT SDK was cloned for API schema reference only.

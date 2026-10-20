@@ -175,6 +175,8 @@ class ExperimentRunner:
             total_cases=total,
             successful_cases=successful,
             failed_cases=failed,
+            # NOTE: model_name and catalog_id are hardcoded labels from Unbox AI's
+            # marketing materials. They are NOT returned by the showcase API response.
             model_name="BehaviorGPT-v4-12.5B",
             catalog_id="retail_catalog_500k",
             execution_mode=self.mode,

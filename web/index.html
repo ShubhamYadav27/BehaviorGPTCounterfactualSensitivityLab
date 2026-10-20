@@ -239,7 +239,7 @@
       <div>
         <span class="badge badge-live">
           <span class="pulse-dot"></span>
-          BehaviorGPT-v4-12.5B (Live Inference)
+          BehaviorGPT Showcase Endpoint
         </span>
       </div>
     </header>
@@ -284,6 +284,13 @@
 
     <!-- Tab 1: Paired Inspector -->
     <div id="tab-inspector" class="tab-panel active">
+      <div style="background: rgba(88, 166, 255, 0.08); border: 1px solid rgba(88, 166, 255, 0.25); border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span class="badge" style="background: rgba(88, 166, 255, 0.15); color: var(--accent); border-color: rgba(88, 166, 255, 0.4); font-weight: 600;">Historical Record — October 15, 2026</span>
+          <span style="font-size: 0.85rem; color: var(--text-muted);">Historical predictions are loaded from the saved experiment records (recorded October 15, 2026).</span>
+        </div>
+        <span style="font-size: 0.8rem; color: var(--text-muted);">40 Paired Cases (80 Inferences)</span>
+      </div>
       <div class="inspector-controls">
         <label for="caseSelect" style="font-weight: 500; font-size: 0.9rem;">Select Experiment Case:</label>
         <select id="caseSelect" onchange="loadCaseDetail(this.value)">
@@ -367,7 +374,7 @@
               <td><span style="color:var(--success); font-weight:600;">10.0%</span></td>
               <td>90.0%</td>
               <td>0.24 ranks</td>
-              <td><b>Semantic Dominance:</b> Item identity heavily overpowers action verb in retail catalogs</td>
+              <td>Item identity appears to dominate action verb in determining predictions</td>
             </tr>
             <tr>
               <td><b>Early Position Mutation (Index 0)</b></td>
@@ -392,7 +399,7 @@
         <pre>
 Sequence Length: 6 actions
 Single Changed Action: Index 0
-- Original Action 0: Click on Timberland Boot (paB0CN9GKZ2W)
+- Original Action 0: Click on Timberland Boot (paB0CPSK1GVB)
 - Mutated Action 0: Click on Luxury Coach Tabby Bag (paB0D8CSSQ7J)
 
 Original Output (Top 3):
@@ -445,9 +452,15 @@ Measurements:
     <!-- Tab 4: Interactive Sandbox -->
     <div id="tab-sandbox" class="tab-panel">
       <div class="deep-dive-card">
-        <div class="deep-dive-title">Live Interactive Counterfactual Sandbox</div>
-        <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:14px;">
-          Submit two behavioral sequences directly to the live BehaviorGPT model and observe real-time predictions and calculated sensitivity metrics.
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+          <div class="deep-dive-title" style="margin-bottom:0;">Live Interactive Counterfactual Sandbox</div>
+          <span class="badge badge-live" style="font-weight: 600;">
+            <span class="pulse-dot"></span>
+            Live Query — Public Showcase Endpoint
+          </span>
+        </div>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:14px; line-height:1.5;">
+          The interactive sandbox sends fresh requests to the public showcase endpoint (<code>https://behaviorgpt.unboxai.com/api/recommendations</code>) to observe real-time model predictions and calculated sensitivity metrics. Historical predictions in the Paired Case Inspector are loaded from the saved experiment records. Note: This interface interfaces with Unbox AI's public showcase endpoint and does not use the official authenticated BehaviorGPT SDK gateway.
         </p>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
@@ -477,6 +490,26 @@ paB09DBFS1Y5</textarea>
     }
 
     async function initDashboard() {
+      try {
+        // Fetch summary stats
+        const summaryRes = await fetch('/api/summary');
+        if (summaryRes.ok) {
+          const summary = await summaryRes.json();
+          document.getElementById('statTotal').textContent = summary.total_cases || '40';
+          document.getElementById('statFlip').textContent = ((summary.top1_change_rate || 0) * 100).toFixed(1) + '%';
+          document.getElementById('statJaccard').textContent = ((summary.avg_jaccard_top5 || 0) * 100).toFixed(1) + '%';
+          // Action-verb invariance from breakdown
+          const actionVerb = summary.by_mutation_type?.action_type_swap;
+          if (actionVerb) {
+            document.getElementById('statActionInvariance').textContent = ((1 - actionVerb.top1_flip_rate) * 100).toFixed(1) + '%';
+          }
+          document.querySelector('#statTotal').closest('.stat-card').querySelector('.stat-sub').textContent =
+            (summary.total_cases * 2) + ' Inferences (Historical Record)';
+        }
+      } catch (e) {
+        console.warn('Could not fetch summary, using static values:', e);
+      }
+
       try {
         const res = await fetch('/api/cases');
         const data = await res.json();
@@ -573,11 +606,31 @@ paB09DBFS1Y5</textarea>
       });
     }
 
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     async function runSandboxTest() {
       const resContainer = document.getElementById('sandboxResults');
-      resContainer.innerHTML = '<div style="color:var(--accent);">Submitting both sequences to BehaviorGPT live model...</div>';
+      resContainer.innerHTML = '<div style="color:var(--accent); font-size:0.9rem;">Submitting both sequences to BehaviorGPT public showcase endpoint (fresh live query)...</div>';
       const seqA = document.getElementById('liveSeqA').value.split('\n').map(s => s.trim()).filter(Boolean);
       const seqB = document.getElementById('liveSeqB').value.split('\n').map(s => s.trim()).filter(Boolean);
+
+      if (seqA.length === 0 || seqB.length === 0) {
+        resContainer.innerHTML = `
+          <div style="background:rgba(248, 81, 73, 0.1); border:1px solid var(--danger); border-radius:6px; padding:12px; margin-top:10px; color:var(--text-heading);">
+            <div style="font-weight:600; color:var(--danger); margin-bottom:4px;">Validation Error</div>
+            <div style="font-size:0.85rem; color:var(--text);">Both Sequence A and Sequence B must contain at least one product ID.</div>
+          </div>
+        `;
+        return;
+      }
 
       try {
         const res = await fetch('/api/run-interactive', {
@@ -585,29 +638,110 @@ paB09DBFS1Y5</textarea>
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ history_a_items: seqA, history_b_items: seqB, limit: 5 })
         });
-        const data = await res.json();
-        resContainer.innerHTML = `
-          <div style="background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:12px; margin-top:10px;">
-            <div style="font-weight:600; margin-bottom:8px; color:var(--text-heading);">Live Response from BehaviorGPT:</div>
-            <div style="display:flex; gap:16px; margin-bottom:10px; font-size:0.85rem;">
-              <span>Top-1 Changed: <b>${data.metrics.top1_changed}</b></span>
-              <span>Jaccard @ 5: <b>${(data.metrics.jaccard_top5 * 100).toFixed(1)}%</b></span>
-              <span>Rank Displacement: <b>${data.metrics.rank_displacement_avg}</b></span>
+
+        // 1. Check res.ok before processing response
+        if (!res.ok) {
+          let errDetail = `HTTP ${res.status}: ${res.statusText || 'Inference Request Failed'}`;
+          try {
+            const errJson = await res.json();
+            if (errJson && errJson.detail) {
+              errDetail = errJson.detail;
+            }
+          } catch (_) {}
+
+          resContainer.innerHTML = `
+            <div style="background:rgba(248, 81, 73, 0.1); border:1px solid var(--danger); border-radius:6px; padding:14px; margin-top:12px; color:var(--text-heading);">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-weight:600; color:var(--danger);">Live Inference Failed (HTTP ${res.status})</span>
+                <span class="badge" style="background:#21262d; color:var(--danger); border-color:var(--danger);">Error</span>
+              </div>
+              <div style="font-size:0.88rem; color:var(--text); line-height:1.4;">${escapeHtml(errDetail)}</div>
+              <div style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+                The public showcase endpoint returned an error. No sensitivity metrics were calculated.
+              </div>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          `;
+          return;
+        }
+
+        const data = await res.json();
+
+        // 2. Check both sequence outputs for errors and unsuccessful status codes
+        const outA = data.sequence_a_output;
+        const outB = data.sequence_b_output;
+        const metrics = data.metrics;
+
+        const hasError = !outA || !outB || !metrics ||
+          outA.status_code !== 200 || outB.status_code !== 200 ||
+          Boolean(outA.error_message) || Boolean(outB.error_message);
+
+        if (hasError) {
+          const detailA = outA && (outA.error_message || (outA.status_code !== 200 ? `Status ${outA.status_code}` : null));
+          const detailB = outB && (outB.error_message || (outB.status_code !== 200 ? `Status ${outB.status_code}` : null));
+          const combinedMsg = [detailA ? `Sequence A: ${detailA}` : null, detailB ? `Sequence B: ${detailB}` : null].filter(Boolean).join(" | ") || "Inference failed without specific error message.";
+
+          resContainer.innerHTML = `
+            <div style="background:rgba(248, 81, 73, 0.1); border:1px solid var(--danger); border-radius:6px; padding:14px; margin-top:12px; color:var(--text-heading);">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-weight:600; color:var(--danger);">Live Inference Unsuccessful</span>
+                <span class="badge" style="background:#21262d; color:var(--danger); border-color:var(--danger);">Error</span>
+              </div>
+              <div style="font-size:0.88rem; color:var(--text);">${escapeHtml(combinedMsg)}</div>
+              <div style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+                Upstream model failed. Misleading zero-valued metrics have been suppressed.
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        // 3. On success, display returned recommendations and metrics normally
+        resContainer.innerHTML = `
+          <div style="background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:14px; margin-top:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:8px;">
+              <span style="font-weight:600; color:var(--text-heading);">Live Query Response (Public Showcase Endpoint):</span>
+              <span class="badge badge-live" style="font-size:0.75rem;">
+                <span class="pulse-dot"></span>
+                Fresh Live Query
+              </span>
+            </div>
+            <div style="display:flex; gap:16px; margin-bottom:12px; font-size:0.85rem; flex-wrap:wrap;">
+              <span>Top-1 Changed: <b style="color:${metrics.top1_changed ? 'var(--warning)' : 'var(--success)'};">${metrics.top1_changed ? 'YES (Flipped)' : 'NO (Preserved)'}</b></span>
+              <span>Jaccard @ 5: <b>${(metrics.jaccard_top5 * 100).toFixed(1)}%</b></span>
+              <span>Rank Displacement: <b>${metrics.rank_displacement_avg.toFixed(2)} ranks</b></span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
               <div>
-                <b style="color:var(--accent);">Sequence A Output:</b>
-                ${data.sequence_a_output.items.map(it => `<div style="font-size:0.8rem; margin-top:4px;">#${it.rank} ${it.name} (${(it.prob*100).toFixed(2)}%)</div>`).join('')}
+                <b style="color:var(--accent); font-size:0.85rem;">Sequence A Recommendations:</b>
+                ${outA.items && outA.items.length > 0 ? outA.items.map(it => `
+                  <div style="font-size:0.8rem; margin-top:6px; background:#161b22; padding:6px 8px; border-radius:4px; border:1px solid var(--border);">
+                    <b>#${it.rank}</b> ${escapeHtml(it.name)}
+                    <span style="color:var(--text-muted); font-family:var(--mono);">(${it.prob !== null && it.prob !== undefined ? (it.prob * 100).toFixed(2) + '%' : 'score ' + it.score.toFixed(3)})</span>
+                  </div>
+                `).join('') : '<div style="color:var(--text-muted); font-size:0.8rem; margin-top:4px;">No items returned</div>'}
               </div>
               <div>
-                <b style="color:var(--warning);">Sequence B Output:</b>
-                ${data.sequence_b_output.items.map(it => `<div style="font-size:0.8rem; margin-top:4px;">#${it.rank} ${it.name} (${(it.prob*100).toFixed(2)}%)</div>`).join('')}
+                <b style="color:var(--warning); font-size:0.85rem;">Sequence B Recommendations:</b>
+                ${outB.items && outB.items.length > 0 ? outB.items.map(it => `
+                  <div style="font-size:0.8rem; margin-top:6px; background:#161b22; padding:6px 8px; border-radius:4px; border:1px solid var(--border);">
+                    <b>#${it.rank}</b> ${escapeHtml(it.name)}
+                    <span style="color:var(--text-muted); font-family:var(--mono);">(${it.prob !== null && it.prob !== undefined ? (it.prob * 100).toFixed(2) + '%' : 'score ' + it.score.toFixed(3)})</span>
+                  </div>
+                `).join('') : '<div style="color:var(--text-muted); font-size:0.8rem; margin-top:4px;">No items returned</div>'}
               </div>
             </div>
           </div>
         `;
       } catch (err) {
-        resContainer.innerHTML = `<div style="color:var(--danger);">Error running live model query: ${err}</div>`;
+        resContainer.innerHTML = `
+          <div style="background:rgba(248, 81, 73, 0.1); border:1px solid var(--danger); border-radius:6px; padding:14px; margin-top:12px; color:var(--text-heading);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <span style="font-weight:600; color:var(--danger);">Client Connection Error</span>
+              <span class="badge" style="background:#21262d; color:var(--danger); border-color:var(--danger);">Error</span>
+            </div>
+            <div style="font-size:0.88rem; color:var(--text);">${escapeHtml(String(err))}</div>
+          </div>
+        `;
       }
     }
 

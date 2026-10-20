@@ -40,12 +40,15 @@ def main():
 
     # Run case investigator
     investigator = CaseInvestigator(results_path="data/experiment_results.jsonl")
+    paired_cases = investigator.load_paired_cases()
     noteworthy = investigator.find_noteworthy_cases()
     if noteworthy.get("high_sensitivity"):
+        case = noteworthy["high_sensitivity"]
+        paired_case = paired_cases.get(case.case_id)
         print("\n=== INVESTIGATED CASE: HIGH SENSITIVITY ===")
-        print(investigator.format_case_investigation(noteworthy["high_sensitivity"]))
+        print(investigator.format_case_investigation(case, paired_case=paired_case))
         with open("data/investigated_case.md", "w", encoding="utf-8") as f:
-            f.write(investigator.format_case_investigation(noteworthy["high_sensitivity"]))
+            f.write(investigator.format_case_investigation(case, paired_case=paired_case))
         print("\nSaved deep case analysis to data/investigated_case.md")
 
 

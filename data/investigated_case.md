@@ -5,10 +5,22 @@
 - **History Length:** 6 actions
 - **Single Changed Action:** Index 0
 
-#### Original Sequence Actions:
-  1. [Rank 1] paB0CN9GKZ2W
-  2. [Rank 2] paB0CPSK59ST
-  3. [Rank 3] paB0D6BWY8Q3
+#### Input Behavioral History:
+**Original History:**
+  0. [viewItem] product: paB0CPSK1GVB <-- mutated position
+  1. [addToCart] product: paB0CRLY5MYP
+  2. [viewItem] product: paB0CPSK1GVB
+  3. [addToCart] product: paB0CPSK1GVB
+  4. [addToCart] product: paB0CPSK1GVB
+  5. [viewItem] product: paB0CRLY5MYP
+
+**Mutated History:**
+  0. [viewItem] product: paB0D8CSSQ7J <-- mutated position
+  1. [addToCart] product: paB0CRLY5MYP
+  2. [viewItem] product: paB0CPSK1GVB
+  3. [addToCart] product: paB0CPSK1GVB
+  4. [addToCart] product: paB0CPSK1GVB
+  5. [viewItem] product: paB0CRLY5MYP
 
 ### 2. Empirical Model Outputs
 #### Original Output (Top 5):
@@ -37,5 +49,5 @@
 ### 4. Engineering Assessment & Sanity Checks
 1. **Request Integrity Check:** Both requests shared identical catalog ID, market (`US`), and timestamps.
 2. **Invariant Verification:** Exactly one action was altered; non-mutated event IDs, timestamps, and order were preserved.
-3. **Inference Consistency:** The model's sequence modeling assigns heavy contextual weight to recent terminal actions, leading to significant candidate space divergence when the terminal item shifts.
-4. **Scientific Scope:** Demonstrates local sensitivity to sequential action swaps; does not establish causal user intent in real production.
+3. **Inference Consistency:** Mutating the action at position 0 (early) resulted in a Top-1 change, indicating the model output is sensitive to this position.
+4. **Scientific Scope:** Observations describe input-output sensitivity. No claims are made about model internals, causal mechanisms, or attention patterns.

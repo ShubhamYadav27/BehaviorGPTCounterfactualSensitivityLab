@@ -1,14 +1,18 @@
 """Client adapter for BehaviorGPT inference.
 
 Supports:
-1. Live inference via official BehaviorGPT showcase endpoint (https://behaviorgpt.unboxai.com/api)
-2. Direct SDK inference when UNBOXAI_API_KEY is configured
-3. Deterministic mock mode for offline unit testing and regression verification.
+1. Live inference via Unbox AI's public showcase endpoint (https://behaviorgpt.unboxai.com/api).
+   This is NOT the official Python SDK gateway. No API key is required for the showcase.
+   If UNBOXAI_API_KEY is set, it is sent as a header but the same showcase endpoint is used.
+2. Deterministic mock mode for offline unit testing and regression verification.
+
+Note: The official BehaviorGPT Python SDK (behaviorgpt package) uses a different
+base URL and endpoint path. This client does not use the official SDK.
 """
 
 import os
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 import httpx
 

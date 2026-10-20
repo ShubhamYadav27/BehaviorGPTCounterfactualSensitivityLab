@@ -28,6 +28,17 @@ class CaseInvestigator:
                     results.append(PairedResult.model_validate_json(line))
         return results
 
+    def load_paired_cases(self) -> Dict[str, dict]:
+        cases_path = self.results_path.parent / "paired_experiment_cases.jsonl"
+        cases = {}
+        if cases_path.exists():
+            with open(cases_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        data = json.loads(line)
+                        cases[data["case_id"]] = data
+        return cases
+
     def find_noteworthy_cases(self) -> Dict[str, Optional[PairedResult]]:
         """Identify candidate cases for deep dive analysis."""
         results = self.load_results()
@@ -61,7 +72,7 @@ class CaseInvestigator:
             "position_contrast": early_case,
         }
 
-    def format_case_investigation(self, case_result: PairedResult) -> str:
+    def format_case_investigation(self, case_result: PairedResult, paired_case: Optional[dict] = None) -> str:
         """Generate human-readable engineering analysis of the investigated case."""
         orig = case_result.original_output
         mut = case_result.mutated_output
@@ -76,12 +87,23 @@ class CaseInvestigator:
             f"- **History Length:** {case_result.history_length} actions",
             f"- **Single Changed Action:** Index {pos_idx}",
             "",
-            "#### Original Sequence Actions:",
+            "#### Input Behavioral History:",
         ]
 
-        # Populate original actions
-        for i, item_id in enumerate(orig.item_ids[:3]):
-            lines.append(f"  {i+1}. [Rank {i+1}] {item_id}")
+        if paired_case is not None:
+            orig_actions = paired_case.get("original_history", {}).get("actions", [])
+            mut_actions = paired_case.get("mutated_history", {}).get("actions", [])
+            lines.append("**Original History:**")
+            for i, action in enumerate(orig_actions):
+                marker = " <-- mutated position" if i == pos_idx else ""
+                lines.append(f"  {i}. [{action.get('action_type', 'unknown')}] product: {action.get('product_id', 'N/A')}{marker}")
+            lines.append("")
+            lines.append("**Mutated History:**")
+            for i, action in enumerate(mut_actions):
+                marker = " <-- mutated position" if i == pos_idx else ""
+                lines.append(f"  {i}. [{action.get('action_type', 'unknown')}] product: {action.get('product_id', 'N/A')}{marker}")
+        else:
+            lines.append("  _Input history not available_")
 
         lines.extend([
             "",
@@ -114,8 +136,13 @@ class CaseInvestigator:
             "### 4. Engineering Assessment & Sanity Checks",
             "1. **Request Integrity Check:** Both requests shared identical catalog ID, market (`US`), and timestamps.",
             "2. **Invariant Verification:** Exactly one action was altered; non-mutated event IDs, timestamps, and order were preserved.",
-            "3. **Inference Consistency:** The model's sequence modeling assigns heavy contextual weight to recent terminal actions, leading to significant candidate space divergence when the terminal item shifts.",
-            "4. **Scientific Scope:** Demonstrates local sensitivity to sequential action swaps; does not establish causal user intent in real production.",
+            "3. **Inference Consistency:** " + (
+                f"Mutating the action at position {pos_idx} ({case_result.position_category.value}) "
+                + ("resulted in a Top-1 change, indicating the model output is sensitive to this position."
+                   if case_result.metrics.top1_changed
+                   else "did not change the Top-1 output, indicating the model output is robust to changes at this position.")
+            ),
+            "4. **Scientific Scope:** Observations describe input-output sensitivity. No claims are made about model internals, causal mechanisms, or attention patterns.",
         ])
 
         return "\n".join(lines)

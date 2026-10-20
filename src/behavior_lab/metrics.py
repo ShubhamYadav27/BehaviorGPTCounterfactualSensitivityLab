@@ -50,6 +50,9 @@ class SensitivityMetricsCalculator:
         jaccard_10 = cls._jaccard([it.id for it in orig_items[:10]], [it.id for it in mut_items[:10]])
 
         # Rank displacement & Spearman correlation on shared items
+        # Note: Displacement averages only over items appearing in BOTH Top-K lists.
+        # When a mutation causes items to leave or enter the Top-K entirely,
+        # this measure understates the actual disruption.
         rank_orig = {it.id: it.rank for it in orig_items}
         rank_mut = {it.id: it.rank for it in mut_items}
         shared_ids = set(rank_orig.keys()) & set(rank_mut.keys())
