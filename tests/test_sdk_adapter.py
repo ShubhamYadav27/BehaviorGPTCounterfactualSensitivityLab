@@ -160,3 +160,26 @@ def test_inference_output_default_provider():
         latency_ms=10.0,
     )
     assert out.provider == "showcase"
+
+
+def test_sdk_item_none_keywords_and_top_terms():
+    item = _make_mock_sdk_item(
+        "item-005",
+        0.05,
+        {"name": "Null Term Item", "keywords": None, "topTerms": None},
+    )
+    pred = _sdk_item_to_prediction(item, rank=1)
+    assert pred.keywords == []
+    assert pred.top_terms == []
+
+
+def test_sdk_adapter_default_catalog():
+    from behavior_lab.sdk_adapter import BehaviorGPTSDKAdapter
+    with patch.dict("os.environ", {"UNBOXAI_API_KEY": "test_key"}):
+        with patch("behavior_lab.sdk_adapter.UnboxAIClient") as mock_client:
+            adapter = BehaviorGPTSDKAdapter()
+            assert adapter._catalog_id == "retail_catalog_500k"
+            mock_client.assert_called_once()
+            _, kwargs = mock_client.call_args
+            assert kwargs.get("default_catalog_id") == "retail_catalog_500k"
+

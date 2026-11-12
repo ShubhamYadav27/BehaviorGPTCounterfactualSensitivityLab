@@ -106,8 +106,8 @@ def _sdk_item_to_prediction(item, rank: int) -> PredictionItem:
         category=data.get("category"),
         price=price_val,
         currency=data.get("currency", "USD"),
-        keywords=data.get("keywords", []),
-        top_terms=data.get("topTerms", []),
+        keywords=data.get("keywords") or [],
+        top_terms=data.get("topTerms") or [],
     )
 
 
@@ -124,7 +124,7 @@ class BehaviorGPTSDKAdapter:
     def __init__(
         self,
         market: str = "us",
-        catalog_id: str = "retail_catalog",
+        catalog_id: str = "retail_catalog_500k",
         api_key: Optional[str] = None,
         timeout: float = 120.0,
     ):

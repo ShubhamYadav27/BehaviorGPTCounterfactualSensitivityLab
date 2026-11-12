@@ -193,14 +193,37 @@ SDK response: `response.items` → list of `Item(id, score, data)`.
 | Requirement | Status |
 |---|---|
 | `behaviorgpt` package installed | ✓ Installed (editable from `repo_temp`) |
-| `UNBOXAI_API_KEY` configured | ✗ **NOT SET** |
-| SDK init with dummy key | Returns HTTP 403 "Invalid API key" |
+| `UNBOXAI_API_KEY` configured | ✓ **VERIFIED** — key authenticates successfully |
+| SDK client initialization | ✓ Connects to `behaviorgpt-northeurope.api.unboxai.com/v1` |
+| Test inference | ✓ Returns real products (Apple AirPods Pro, etc.) |
 | Showcase access | ✓ Works without any key |
 
-> **Blocker:** Live SDK inference requires a valid `UNBOXAI_API_KEY`.
-> The implementation is complete and correct such that providing a key
-> makes everything work. The verification script reports this blocker
-> honestly.
+### Verified Live SDK Inference (2026-11-12)
+
+```
+verify_behaviorgpt_sdk.py → PASS (exit code 0)
+  - Items returned: 5
+  - First item: paB0CHWRXH8B (Apple AirPods Pro), score=1.246936
+  - Latency: 1293.9ms
+
+4-pair SDK experiment → 4/4 successful
+  - Provider: behaviorgpt_sdk
+  - Top-1 Flip Rate: 50.0%
+  - Avg Jaccard@5: 0.500
+```
+
+### Catalog ID Fix
+
+The SDK's default `retail_catalog` is not accessible with all API keys.
+The correct catalog for this project is `retail_catalog_500k`, which is
+the same catalog used by the showcase endpoint. The adapter defaults to
+`retail_catalog_500k`.
+
+### Data Field Fix
+
+SDK `item.data["keywords"]` returns `None` for some items (unlike the
+showcase which returns `[]`). The adapter uses `data.get("keywords") or []`
+to handle this safely.
 
 ---
 
@@ -208,8 +231,8 @@ SDK response: `response.items` → list of `Item(id, score, data)`.
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| No API key available | **HIGH** | SDK adapter fully implemented; verification script reports blocker; showcase mode retained as fallback |
 | SDK `RemoveFromCart` rejected | LOW | Not used in experiment (only `View`, `AddToCart`, `Search`) |
-| Response `data` dict structure varies | MEDIUM | Adapter handles missing fields gracefully with defaults |
+| Response `data` dict structure varies | MEDIUM | Adapter uses `or []` for nullable list fields |
 | Rate limiting | MEDIUM | Adapter catches `RateLimitError`, returns structured error |
-| SDK response `score` vs showcase `prob` | LOW | Both mapped to `PredictionItem.score` and `PredictionItem.prob` |
+| SDK `score` scale differs from showcase `prob` | LOW | Both mapped to `PredictionItem.score`; scale difference documented |
+| Catalog ID mismatch | RESOLVED | Fixed default to `retail_catalog_500k` |

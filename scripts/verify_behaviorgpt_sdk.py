@@ -47,7 +47,7 @@ def main() -> int:
     print("\n[3/4] Initializing UnboxAIClient...")
     try:
         from behaviorgpt import UnboxAIClient, View
-        client = UnboxAIClient(market="us", api_key=api_key, default_catalog_id="retail_catalog")
+        client = UnboxAIClient(market="us", api_key=api_key, default_catalog_id="retail_catalog_500k")
         print(f"  {OK} Client initialized (base_url={client.base_url})")
     except behaviorgpt.AuthenticationError as e:
         print(f"  {FAIL} Authentication error during init: {e}")
