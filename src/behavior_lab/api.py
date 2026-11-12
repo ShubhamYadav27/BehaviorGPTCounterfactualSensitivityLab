@@ -149,16 +149,36 @@ class InteractiveHistoryRequest(BaseModel):
     history_b_items: List[str]
     market: str = "US"
     limit: int = 5
+    mode: str = "live"  # "live" (showcase), "sdk" (official SDK)
 
 
 @app.post("/api/run-interactive")
 def run_interactive(req: InteractiveHistoryRequest):
     """Run interactive live counterfactual comparison between two sequences.
 
+    Supports mode="live" (showcase endpoint) or mode="sdk" (official SDK).
     Returns HTTP 502 Bad Gateway if either sequence's upstream inference fails,
     avoiding the calculation of false zero-valued sensitivity metrics.
     """
-    client = BehaviorGPTClient(mode="live", market=req.market)
+    if req.mode == "sdk":
+        from behavior_lab.sdk_adapter import BehaviorGPTSDKAdapter, is_sdk_available
+
+        if not is_sdk_available():
+            raise HTTPException(
+                status_code=503,
+                detail="SDK mode requested but behaviorgpt package is not installed.",
+            )
+        try:
+            provider = BehaviorGPTSDKAdapter(market=req.market.lower())
+        except Exception as ex:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to initialize SDK: {type(ex).__name__}: {str(ex)[:200]}",
+            )
+        provider_label = "behaviorgpt_sdk"
+    else:
+        provider = BehaviorGPTClient(mode="live", market=req.market)
+        provider_label = "showcase"
 
     hist_a = BehavioralHistory(
         history_id="interactive_a",
@@ -194,15 +214,15 @@ def run_interactive(req: InteractiveHistoryRequest):
 
     try:
         try:
-            out_a = client.predict(hist_a, limit=req.limit, variant_label="Sequence A")
+            out_a = provider.predict(hist_a, limit=req.limit, variant_label="Sequence A")
         except Exception as ex:
             raise HTTPException(
                 status_code=502,
-                detail=f"Upstream showcase endpoint connection failed for Sequence A: {type(ex).__name__}",
+                detail=f"Upstream {provider_label} connection failed for Sequence A: {type(ex).__name__}",
             )
 
         if out_a.status_code != 200 or out_a.error_message:
-            msg = "Upstream showcase endpoint returned non-success response for Sequence A"
+            msg = f"Upstream {provider_label} returned non-success response for Sequence A"
             if out_a.status_code:
                 msg += f" (status {out_a.status_code})"
             if out_a.error_message:
@@ -211,15 +231,15 @@ def run_interactive(req: InteractiveHistoryRequest):
             raise HTTPException(status_code=502, detail=msg)
 
         try:
-            out_b = client.predict(hist_b, limit=req.limit, variant_label="Sequence B")
+            out_b = provider.predict(hist_b, limit=req.limit, variant_label="Sequence B")
         except Exception as ex:
             raise HTTPException(
                 status_code=502,
-                detail=f"Upstream showcase endpoint connection failed for Sequence B: {type(ex).__name__}",
+                detail=f"Upstream {provider_label} connection failed for Sequence B: {type(ex).__name__}",
             )
 
         if out_b.status_code != 200 or out_b.error_message:
-            msg = "Upstream showcase endpoint returned non-success response for Sequence B"
+            msg = f"Upstream {provider_label} returned non-success response for Sequence B"
             if out_b.status_code:
                 msg += f" (status {out_b.status_code})"
             if out_b.error_message:
@@ -230,12 +250,13 @@ def run_interactive(req: InteractiveHistoryRequest):
         metrics = SensitivityMetricsCalculator.compute(out_a, out_b)
 
         return {
+            "provider": provider_label,
             "sequence_a_output": out_a.model_dump(),
             "sequence_b_output": out_b.model_dump(),
             "metrics": metrics.model_dump(),
         }
     finally:
-        client.close()
+        provider.close()
 
 
 @app.get("/", response_class=HTMLResponse)

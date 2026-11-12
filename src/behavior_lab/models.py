@@ -99,8 +99,10 @@ class InferenceOutput(BaseModel):
     model_name: str = "BehaviorGPT-v4-12.5B"
     catalog_id: str = "retail_catalog_500k"
     is_mock: bool = False
+    provider: str = "showcase"  # "showcase" or "behaviorgpt_sdk"
     status_code: int = 200
     error_message: Optional[str] = None
+    raw_payload: Optional[Dict[str, Any]] = None
 
     @property
     def top1(self) -> Optional[PredictionItem]:
@@ -146,7 +148,8 @@ class ExperimentSummary(BaseModel):
     failed_cases: int
     model_name: str
     catalog_id: str
-    execution_mode: str  # "live" or "mock"
+    execution_mode: str  # "live", "mock", or "sdk"
+    provider: str = "showcase"  # "showcase" or "behaviorgpt_sdk"
     top1_change_rate: float
     avg_jaccard_top5: float
     avg_jaccard_top10: float

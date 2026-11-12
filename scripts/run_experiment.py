@@ -14,7 +14,12 @@ from behavior_lab.case_investigator import CaseInvestigator
 
 def main():
     parser = argparse.ArgumentParser(description="Run BehaviorGPT Counterfactual Sensitivity Experiment")
-    parser.add_argument("--mode", choices=["live", "mock"], default="live", help="Inference mode (live or mock)")
+    parser.add_argument(
+        "--mode",
+        choices=["live", "mock", "sdk"],
+        default="live",
+        help="Inference mode: 'live' (showcase API), 'mock' (offline), or 'sdk' (official BehaviorGPT SDK)",
+    )
     parser.add_argument("--count", type=int, default=40, help="Total synthetic paired histories to evaluate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for deterministic generation")
     args = parser.parse_args()

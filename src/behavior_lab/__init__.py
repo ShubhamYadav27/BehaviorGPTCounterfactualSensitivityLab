@@ -15,6 +15,8 @@ from behavior_lab.models import (
     ExperimentSummary,
 )
 
+from behavior_lab.sdk_adapter import BehaviorGPTSDKAdapter, is_sdk_available
+
 __all__ = [
     "ActionType",
     "BehavioralAction",
@@ -28,4 +30,6 @@ __all__ = [
     "SensitivityMetrics",
     "PairedResult",
     "ExperimentSummary",
+    "BehaviorGPTSDKAdapter",
+    "is_sdk_available",
 ]

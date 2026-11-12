@@ -8,7 +8,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Protocol
 
 from behavior_lab.client import BehaviorGPTClient
 from behavior_lab.dataset_generator import SyntheticHistoryGenerator
@@ -16,10 +16,50 @@ from behavior_lab.metrics import SensitivityMetricsCalculator
 from behavior_lab.models import (
     BehavioralHistory,
     ExperimentSummary,
+    InferenceOutput,
     PairedExperimentCase,
     PairedResult,
 )
 from behavior_lab.mutator import ControlledMutator
+
+
+class InferenceProvider(Protocol):
+    """Protocol for any inference backend (showcase client or SDK adapter)."""
+
+    def predict(
+        self,
+        history: BehavioralHistory,
+        limit: int = 10,
+        variant_label: str = "original",
+        case_id: str = "case_000",
+    ) -> InferenceOutput: ...
+
+    def close(self) -> None: ...
+
+    def __enter__(self): ...
+
+    def __exit__(self, exc_type, exc_val, exc_tb): ...
+
+
+def _create_inference_provider(mode: str) -> InferenceProvider:
+    """Factory: create the appropriate inference backend based on mode.
+
+    Modes:
+        'live'  -> BehaviorGPTClient (showcase endpoint, no API key required)
+        'mock'  -> BehaviorGPTClient in mock mode (deterministic, offline)
+        'sdk'   -> BehaviorGPTSDKAdapter (official SDK, requires UNBOXAI_API_KEY)
+    """
+    if mode == "sdk":
+        from behavior_lab.sdk_adapter import BehaviorGPTSDKAdapter, is_sdk_available
+
+        if not is_sdk_available():
+            raise RuntimeError(
+                "SDK mode requested but behaviorgpt package is not installed. "
+                "Install with: pip install behaviorgpt"
+            )
+        return BehaviorGPTSDKAdapter()
+    else:
+        return BehaviorGPTClient(mode=mode)
 
 
 class ExperimentRunner:
@@ -32,6 +72,8 @@ class ExperimentRunner:
         limit: int = 10,
         seed: int = 42,
     ):
+        if mode not in ("live", "mock", "sdk"):
+            raise ValueError(f"Invalid mode '{mode}'. Must be 'live', 'mock', or 'sdk'.")
         self.mode = mode
         self.data_dir = Path(data_dir)
         self.limit = limit
@@ -52,56 +94,63 @@ class ExperimentRunner:
         self._save_jsonl(self.data_dir / "synthetic_histories.jsonl", [h.model_dump() for h in histories])
         self._save_jsonl(self.data_dir / "paired_experiment_cases.jsonl", [c.model_dump() for c in paired_cases])
 
-        print(f"[{datetime.now(tz=UTC).isoformat()}] Running inference in '{self.mode}' mode across {len(paired_cases)} pairs...")
+        provider_label = "behaviorgpt_sdk" if self.mode == "sdk" else "showcase"
+        print(f"[{datetime.now(tz=UTC).isoformat()}] Running inference in '{self.mode}' mode (provider={provider_label}) across {len(paired_cases)} pairs...")
         results: List[PairedResult] = []
         successful = 0
         failed = 0
 
-        with BehaviorGPTClient(mode=self.mode) as client:
-            for i, case in enumerate(paired_cases, start=1):
-                print(f"  Executing pair {i}/{len(paired_cases)}: {case.case_id} ({case.archetype} | {case.mutation_spec.mutation_type.value})...")
-                orig_out = client.predict(
-                    history=case.original_history,
-                    limit=self.limit,
-                    variant_label="original",
-                    case_id=case.case_id,
-                )
-                mut_out = client.predict(
-                    history=case.mutated_history,
-                    limit=self.limit,
-                    variant_label="mutated",
-                    case_id=case.case_id,
-                )
+        provider = _create_inference_provider(self.mode)
+        try:
+            with provider:
+                for i, case in enumerate(paired_cases, start=1):
+                    print(f"  Executing pair {i}/{len(paired_cases)}: {case.case_id} ({case.archetype} | {case.mutation_spec.mutation_type.value})...")
+                    orig_out = provider.predict(
+                        history=case.original_history,
+                        limit=self.limit,
+                        variant_label="original",
+                        case_id=case.case_id,
+                    )
+                    mut_out = provider.predict(
+                        history=case.mutated_history,
+                        limit=self.limit,
+                        variant_label="mutated",
+                        case_id=case.case_id,
+                    )
 
-                if orig_out.status_code == 200 and mut_out.status_code == 200:
-                    successful += 1
-                else:
-                    failed += 1
+                    if orig_out.status_code == 200 and mut_out.status_code == 200:
+                        successful += 1
+                    else:
+                        failed += 1
 
-                metrics = SensitivityMetricsCalculator.compute(orig_out, mut_out)
+                    metrics = SensitivityMetricsCalculator.compute(orig_out, mut_out)
 
-                result = PairedResult(
-                    case_id=case.case_id,
-                    archetype=case.archetype,
-                    mutation_type=case.mutation_spec.mutation_type,
-                    position_category=case.mutation_spec.position_category,
-                    position_index=case.mutation_spec.position_index,
-                    history_length=case.original_history.length,
-                    original_output=orig_out,
-                    mutated_output=mut_out,
-                    metrics=metrics,
-                )
-                results.append(result)
+                    result = PairedResult(
+                        case_id=case.case_id,
+                        archetype=case.archetype,
+                        mutation_type=case.mutation_spec.mutation_type,
+                        position_category=case.mutation_spec.position_category,
+                        position_index=case.mutation_spec.position_index,
+                        history_length=case.original_history.length,
+                        original_output=orig_out,
+                        mutated_output=mut_out,
+                        metrics=metrics,
+                    )
+                    results.append(result)
+        except Exception:
+            provider.close()
+            raise
 
         # Save paired results
         self._save_jsonl(self.data_dir / "experiment_results.jsonl", [r.model_dump() for r in results])
 
         # Compute aggregate summary
-        summary = self._compute_summary(results, successful, failed)
+        summary = self._compute_summary(results, successful, failed, provider_label)
         with open(self.data_dir / "experiment_summary.json", "w", encoding="utf-8") as f:
             f.write(summary.model_dump_json(indent=2))
 
         print(f"[{datetime.now(tz=UTC).isoformat()}] Experiment run completed! Successful: {successful}, Failed: {failed}")
+        print(f"  Provider: {provider_label}")
         print(f"  Top-1 Flip Rate: {summary.top1_change_rate:.1%}")
         print(f"  Mean Jaccard@5: {summary.avg_jaccard_top5:.3f}")
         print(f"  Mean Rank Displacement: {summary.avg_rank_displacement:.2f}")
@@ -109,7 +158,8 @@ class ExperimentRunner:
         return summary
 
     def _compute_summary(
-        self, results: List[PairedResult], successful: int, failed: int
+        self, results: List[PairedResult], successful: int, failed: int,
+        provider_label: str = "showcase",
     ) -> ExperimentSummary:
         total = len(results)
         if total == 0:
@@ -159,8 +209,7 @@ class ExperimentRunner:
             data["top1_flip_rate"] = round(data["top1_flips"] / cnt, 3)
             data["avg_jaccard_5"] = round(data["sum_j5"] / cnt, 3)
 
-        # Identify an interesting candidate case:
-        # e.g., cross-category swap that completely flipped top1, or subtle swap that preserved top1
+        # Identify an interesting candidate case
         interesting_id = None
         for r in results:
             if r.metrics.top1_changed and r.metrics.jaccard_top5 < 0.2:
@@ -169,17 +218,25 @@ class ExperimentRunner:
         if not interesting_id and results:
             interesting_id = results[0].case_id
 
+        # Determine model_name from first successful result
+        model_name = "BehaviorGPT-v4-12.5B"
+        catalog_id = "retail_catalog_500k"
+        for r in results:
+            if r.original_output.status_code == 200:
+                model_name = r.original_output.model_name
+                catalog_id = r.original_output.catalog_id
+                break
+
         return ExperimentSummary(
             experiment_id=f"exp_{datetime.now(tz=UTC).strftime('%Y%m%d_%H%M%S')}",
             timestamp=datetime.now(tz=UTC).isoformat(),
             total_cases=total,
             successful_cases=successful,
             failed_cases=failed,
-            # NOTE: model_name and catalog_id are hardcoded labels from Unbox AI's
-            # marketing materials. They are NOT returned by the showcase API response.
-            model_name="BehaviorGPT-v4-12.5B",
-            catalog_id="retail_catalog_500k",
+            model_name=model_name,
+            catalog_id=catalog_id,
             execution_mode=self.mode,
+            provider=provider_label,
             top1_change_rate=round(top1_rate, 4),
             avg_jaccard_top5=round(avg_j5, 4),
             avg_jaccard_top10=round(avg_j10, 4),
