@@ -715,11 +715,11 @@
           </div>
           <div style="min-width:180px;">
             <label>Item ID:</label>
-            <input type="text" id="similarSeedId" value="paB0D93VKPPK" style="width:100%;" />
+            <input type="text" id="similarSeedId" value="paB0D93VKPPK" oninput="syncSimilarSelectFromId()" style="width:100%;" />
           </div>
           <div>
             <label>Catalog:</label>
-            <select id="similarCatalog">
+            <select id="similarCatalog" onchange="onSimilarCatalogChange()">
               <option value="retail_catalog_500k" selected>retail_catalog_500k (Verified Retail Catalog)</option>
               <option value="hm_fashion">hm_fashion (H&amp;M)</option>
             </select>
@@ -1118,7 +1118,14 @@ paB09DBFS1Y5</textarea>
           });
           sel.appendChild(group);
         }
-        if (currentVal) sel.value = currentVal;
+        if (currentVal) {
+          sel.value = currentVal;
+        } else if (sel.id === 'similarSeedSelect') {
+          const seedInput = document.getElementById('similarSeedId');
+          if (seedInput && seedInput.value) {
+            sel.value = seedInput.value;
+          }
+        }
       });
     }
 
@@ -1131,8 +1138,57 @@ paB09DBFS1Y5</textarea>
 
     function syncSimilarIdFromSelect() {
       const sel = document.getElementById('similarSeedSelect');
-      if (sel.value) {
+      if (sel && sel.value) {
         document.getElementById('similarSeedId').value = sel.value;
+      }
+    }
+
+    function syncSimilarSelectFromId() {
+      const inputVal = document.getElementById('similarSeedId').value.trim();
+      const sel = document.getElementById('similarSeedSelect');
+      if (sel) {
+        sel.value = inputVal;
+      }
+    }
+
+    async function onSimilarCatalogChange() {
+      const cat = document.getElementById('similarCatalog').value;
+      await loadSimilarCatalogItems(cat);
+    }
+
+    async function loadSimilarCatalogItems(catalogId, preferredItemId) {
+      const cat = catalogId || document.getElementById('similarCatalog').value || 'retail_catalog_500k';
+      try {
+        const res = await fetch(`${getApiBase()}/api/catalog/items?catalog_id=${encodeURIComponent(cat)}`);
+        if (res.ok) {
+          const data = await res.json();
+          const items = data.items || [];
+          const categories = data.categories || {};
+          const sel = document.getElementById('similarSeedSelect');
+          if (sel) {
+            sel.innerHTML = '<option value="">-- Choose verified catalog item --</option>';
+            for (const [catName, catItems] of Object.entries(categories)) {
+              const group = document.createElement('optgroup');
+              group.label = catName;
+              catItems.forEach(it => {
+                const opt = document.createElement('option');
+                opt.value = it.id;
+                opt.textContent = `${it.name} (${it.brand}) - $${it.price || 'N/A'}`;
+                group.appendChild(opt);
+              });
+              sel.appendChild(group);
+            }
+            let targetId = preferredItemId;
+            if (!targetId || !items.some(it => it.id === targetId)) {
+              const firstSimilar = items.find(it => it.has_similar_items) || items[0];
+              targetId = firstSimilar ? firstSimilar.id : '';
+            }
+            sel.value = targetId;
+            document.getElementById('similarSeedId').value = targetId;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load catalog items for', cat, err);
       }
     }
 
@@ -1337,9 +1393,9 @@ paB09DBFS1Y5</textarea>
     }
 
     function exploreSimilarFor(itemId) {
+      document.getElementById('similarCatalog').value = 'retail_catalog_500k';
+      loadSimilarCatalogItems('retail_catalog_500k', itemId);
       document.getElementById('similarSeedId').value = itemId;
-      const select = document.getElementById('similarSeedSelect');
-      if (select) select.value = itemId;
       switchTab('tab-similar');
       runSimilarItemsQuery();
     }
@@ -1565,8 +1621,37 @@ paB09DBFS1Y5</textarea>
       const limit = parseInt(document.getElementById('similarLimit').value, 10);
 
       const resContainer = document.getElementById('similarResultsContainer');
-      resContainer.style.display = 'block';
       const list = document.getElementById('similarItemsList');
+
+      // Prevent requests when the selected item does not belong to the selected catalog
+      if (catalogId === 'retail_catalog_500k' && !itemId.startsWith('paB') && itemId.match(/^\d+$/)) {
+        resContainer.style.display = 'block';
+        list.innerHTML = `
+          <div style="background:var(--danger-muted); border:1px solid var(--danger); border-radius:6px; padding:14px;">
+            <div style="font-weight:600; color:var(--danger); margin-bottom:4px;">Catalog Mismatch Prevented</div>
+            <div style="font-size:0.85rem; color:var(--text);">Item <code>${escapeHtml(itemId)}</code> does not belong to <b>retail_catalog_500k</b>.</div>
+            <div style="font-size:0.78rem; color:var(--text-muted); margin-top:8px;">
+              Please select a verified item from <code>retail_catalog_500k</code> (e.g. <code>paB0D93VKPPK</code>) or switch the catalog dropdown to <code>hm_fashion</code>.
+            </div>
+          </div>
+        `;
+        return;
+      }
+      if (catalogId === 'hm_fashion' && (itemId.startsWith('paB') || !itemId.match(/^\d+$/))) {
+        resContainer.style.display = 'block';
+        list.innerHTML = `
+          <div style="background:var(--danger-muted); border:1px solid var(--danger); border-radius:6px; padding:14px;">
+            <div style="font-weight:600; color:var(--danger); margin-bottom:4px;">Catalog Mismatch Prevented</div>
+            <div style="font-size:0.85rem; color:var(--text);">Item <code>${escapeHtml(itemId)}</code> belongs to <b>retail_catalog_500k</b>, not <b>hm_fashion</b>.</div>
+            <div style="font-size:0.78rem; color:var(--text-muted); margin-top:8px;">
+              Please select an item from <code>hm_fashion</code> (e.g. <code>0880139002</code>) or switch the catalog dropdown to <code>retail_catalog_500k</code>.
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      resContainer.style.display = 'block';
       list.innerHTML = '<div style="color:var(--purple); font-size:0.9rem; padding:12px;">Querying official SDK similar_items()...</div>';
 
       try {

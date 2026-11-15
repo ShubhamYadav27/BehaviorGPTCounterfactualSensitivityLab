@@ -218,9 +218,61 @@ def _compute_item_transitions(
     )
 
 
+HM_VERIFIED_ITEMS: List[Dict[str, Any]] = [
+    {
+        "key": "HM_NASA_CREWNECK",
+        "id": "0880139002",
+        "name": "NASA Crewneck Sweatshirt",
+        "brand": "H&M",
+        "category": "Hoodies & Sweatshirts",
+        "price": 29.99,
+        "has_similar_items": True,
+    },
+    {
+        "key": "HM_NASA_HOOD",
+        "id": "0885989002",
+        "name": "NASA Hooded Sweatshirt",
+        "brand": "H&M",
+        "category": "Hoodies & Sweatshirts",
+        "price": 34.99,
+        "has_similar_items": True,
+    },
+    {
+        "key": "HM_COTTON_SOCKS",
+        "id": "0807241051",
+        "name": "1p Cotton Ribbed Socks",
+        "brand": "H&M",
+        "category": "Socks & Underwear",
+        "price": 4.99,
+        "has_similar_items": True,
+    },
+]
+
+
 @app.get("/api/catalog/items")
-def get_catalog_items():
-    """Return verified items from retail_catalog_500k grouped by category with friendly metadata."""
+def get_catalog_items(catalog_id: str = "retail_catalog_500k"):
+    """Return verified items grouped by category with friendly metadata for a supported catalog."""
+    cat_clean = (catalog_id or "retail_catalog_500k").strip()
+    if cat_clean not in {"retail_catalog_500k", "hm_fashion"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Catalog '{catalog_id}' is not supported. Supported catalog is 'retail_catalog_500k'.",
+        )
+
+    if cat_clean == "hm_fashion":
+        hm_categories: Dict[str, List[Dict[str, Any]]] = {}
+        for it in HM_VERIFIED_ITEMS:
+            cat_name = it["category"]
+            if cat_name not in hm_categories:
+                hm_categories[cat_name] = []
+            hm_categories[cat_name].append(it)
+        return {
+            "catalog_id": "hm_fashion",
+            "total_items": len(HM_VERIFIED_ITEMS),
+            "items": HM_VERIFIED_ITEMS,
+            "categories": hm_categories,
+        }
+
     SIMILAR_SUPPORTED = {
         "paB0D93VKPPK", "paB0CJSYB1SY", "paB0CPSK1GVB", "paB0DK3YY682",
         "paB0DJ1VN1LF", "paB0859XT328", "paB0D8CSSQ7J", "paB0CRM723D6"
@@ -550,19 +602,49 @@ async def _resolve_similar_items(
 
     clean_id = item_id.strip()
 
+    # Prevent requests when item does not belong to the selected catalog
+    retail_pids = {v["id"] for v in VERIFIED_ITEMS.values()}
+    hm_pids = {it["id"] for it in HM_VERIFIED_ITEMS}
+
+    if cat_clean == "retail_catalog_500k":
+        if clean_id in hm_pids or clean_id.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Catalog mismatch: Item '{clean_id}' belongs to 'hm_fashion', not 'retail_catalog_500k'. Please select an item from retail_catalog_500k (e.g. paB0D93VKPPK) or switch catalog to 'hm_fashion'.",
+            )
+    elif cat_clean == "hm_fashion":
+        if clean_id in retail_pids or clean_id.startswith("paB"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Catalog mismatch: Item '{clean_id}' belongs to 'retail_catalog_500k', not 'hm_fashion'. Please select an item from hm_fashion (e.g. 0880139002) or switch catalog to 'retail_catalog_500k'.",
+            )
+
     # Seed item lookup
     seed_info = {"id": clean_id, "name": clean_id, "brand": "Unknown", "category": "General", "price": None}
-    for k, v in VERIFIED_ITEMS.items():
-        if v["id"] == clean_id:
-            seed_info = {
-                "id": clean_id,
-                "key": k,
-                "name": k.replace("_", " ").title(),
-                "brand": v.get("brand"),
-                "category": v.get("cat"),
-                "price": v.get("price"),
-            }
-            break
+    if cat_clean == "hm_fashion":
+        for it in HM_VERIFIED_ITEMS:
+            if it["id"] == clean_id:
+                seed_info = {
+                    "id": clean_id,
+                    "key": it["key"],
+                    "name": it["name"],
+                    "brand": it["brand"],
+                    "category": it["category"],
+                    "price": it["price"],
+                }
+                break
+    else:
+        for k, v in VERIFIED_ITEMS.items():
+            if v["id"] == clean_id:
+                seed_info = {
+                    "id": clean_id,
+                    "key": k,
+                    "name": k.replace("_", " ").title(),
+                    "brand": v.get("brand"),
+                    "category": v.get("cat"),
+                    "price": v.get("price"),
+                }
+                break
 
     start = time.perf_counter()
 

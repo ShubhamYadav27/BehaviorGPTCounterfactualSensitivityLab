@@ -58,13 +58,29 @@ class DirectClient:
     def get(self, path: str):
         if path == "/api/summary":
             return MockResponse(200, get_summary())
-        elif path == "/api/catalog/items":
-            return MockResponse(200, get_catalog_items())
-        elif path.startswith("/api/items/") and path.endswith("/similar"):
-            parts = path.split("/")
-            item_id = parts[3]
+        elif path == "/api/catalog/items" or path.startswith("/api/catalog/items?"):
+            cat = "retail_catalog_500k"
+            if "catalog_id=" in path:
+                cat = path.split("catalog_id=")[1].split("&")[0]
             try:
-                val = _drive_coro(get_similar_items_endpoint(item_id=item_id, mode="mock"))
+                return MockResponse(200, get_catalog_items(catalog_id=cat))
+            except HTTPException as e:
+                return MockResponse(e.status_code, {"detail": e.detail})
+        elif path.startswith("/api/items/") and "/similar" in path:
+            base_part = path.split("?")[0]
+            parts = base_part.split("/")
+            item_id = parts[3]
+            cat = "retail_catalog_500k"
+            mode = "mock"
+            if "?" in path:
+                q = path.split("?")[1]
+                for param in q.split("&"):
+                    if param.startswith("catalog_id="):
+                        cat = param.split("=")[1]
+                    elif param.startswith("mode="):
+                        mode = param.split("=")[1]
+            try:
+                val = _drive_coro(get_similar_items_endpoint(item_id=item_id, catalog_id=cat, mode=mode))
                 return MockResponse(200, val)
             except HTTPException as e:
                 return MockResponse(e.status_code, {"detail": e.detail})
@@ -736,6 +752,45 @@ def test_similar_items_sdk_not_found_404(client, monkeypatch):
         _drive_coro(get_similar_items_endpoint(item_id="unknown_id", mode="sdk"))
     assert exc_info.value.status_code == 404
     assert "not found in catalog" in exc_info.value.detail
+
+
+def test_catalog_items_by_catalog(client):
+    """GET /api/catalog/items filters by catalog and rejects unsupported catalogs."""
+    # Default / retail_catalog_500k
+    r_retail = client.get("/api/catalog/items?catalog_id=retail_catalog_500k")
+    assert r_retail.status_code == 200
+    assert r_retail.json()["catalog_id"] == "retail_catalog_500k"
+    assert r_retail.json()["total_items"] == 16
+
+    # hm_fashion
+    r_hm = client.get("/api/catalog/items?catalog_id=hm_fashion")
+    assert r_hm.status_code == 200
+    assert r_hm.json()["catalog_id"] == "hm_fashion"
+    assert r_hm.json()["total_items"] >= 3
+    assert any(it["id"] == "0880139002" for it in r_hm.json()["items"])
+
+    # Unsupported
+    r_bad = client.get("/api/catalog/items?catalog_id=amazon_sample")
+    assert r_bad.status_code == 400
+
+
+def test_similar_items_catalog_mismatch_prevented(client):
+    """GET /api/items/{item_id}/similar prevents requests when item does not belong to catalog."""
+    # H&M item with retail_catalog_500k -> 400 Mismatch
+    r1 = client.get("/api/items/0880139002/similar?catalog_id=retail_catalog_500k&mode=mock")
+    assert r1.status_code == 400
+    assert "Catalog mismatch" in r1.json()["detail"]
+
+    # Retail item with hm_fashion -> 400 Mismatch
+    r2 = client.get("/api/items/paB0D93VKPPK/similar?catalog_id=hm_fashion&mode=mock")
+    assert r2.status_code == 400
+    assert "Catalog mismatch" in r2.json()["detail"]
+
+    # Correct correspondence -> 200 OK
+    r3 = client.get("/api/items/paB0D93VKPPK/similar?catalog_id=retail_catalog_500k&mode=mock")
+    assert r3.status_code == 200
+    assert r3.json()["seed_item"]["id"] == "paB0D93VKPPK"
+    assert r3.json()["catalog_id"] == "retail_catalog_500k"
 
 
 # ==============================================================================
