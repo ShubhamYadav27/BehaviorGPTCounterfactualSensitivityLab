@@ -7,7 +7,7 @@ Guarantees:
 """
 
 import copy
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 from behavior_lab.dataset_generator import VERIFIED_ITEMS
 from behavior_lab.models import (
     ActionType,
@@ -19,24 +19,24 @@ from behavior_lab.models import (
     PairedExperimentCase,
 )
 
+# Item and category metadata mappings for strict category enforcement
+ITEM_TO_META: Dict[str, dict] = {item["id"]: item for item in VERIFIED_ITEMS.values()}
+CATEGORY_TO_ITEMS: Dict[str, List[str]] = {}
+for item in VERIFIED_ITEMS.values():
+    CATEGORY_TO_ITEMS.setdefault(item["cat"], []).append(item["id"])
+
 
 class ControlledMutator:
     """Creates strictly paired counterfactual variants by altering exactly one action."""
 
     def __init__(self):
-        # Alternative items for cross-category and within-category interventions
+        # Alternative items for cross-category interventions
         self.cross_category_pool = {
             "athletic": VERIFIED_ITEMS["APPLE_IPAD_109"]["id"],      # Tech replacement
             "tech": VERIFIED_ITEMS["COACH_TABBY_BAG"]["id"],         # Luxury replacement
             "luxury": VERIFIED_ITEMS["NIKE_JORDAN4_BRED"]["id"],     # Footwear replacement
             "home": VERIFIED_ITEMS["PS5_CONTROLLER_PEARL"]["id"],     # Gaming replacement
             "general": VERIFIED_ITEMS["LOLOI_ACCENT_RUG"]["id"],
-        }
-        self.within_category_pool = {
-            VERIFIED_ITEMS["NIKE_PANTS"]["id"]: VERIFIED_ITEMS["NIKE_PRO_SHORTS"]["id"],
-            VERIFIED_ITEMS["NIKE_JORDAN4_BRED"]["id"]: VERIFIED_ITEMS["NIKE_DUNK_LOW"]["id"],
-            VERIFIED_ITEMS["APPLE_IPAD_109"]["id"]: VERIFIED_ITEMS["SAMSUNG_GALAXY_TAB"]["id"],
-            VERIFIED_ITEMS["COACH_TABBY_BAG"]["id"]: VERIFIED_ITEMS["NIKE_AIR_JORDAN_RETRO"]["id"],
         }
 
     def create_paired_cases(self, histories: List[BehavioralHistory]) -> List[PairedExperimentCase]:
@@ -109,30 +109,57 @@ class ControlledMutator:
         rationale = ""
 
         if mutation_type == MutationType.ITEM_REPLACEMENT_CROSS_CATEGORY:
-            # Swap target item for cross-category item
+            # Swap target item for strictly cross-category item
+            target_meta = ITEM_TO_META.get(target_orig.product_id)
+            target_cat = target_meta["cat"] if target_meta else None
+
+            cross_candidates = [
+                item["id"] for item in VERIFIED_ITEMS.values()
+                if item["cat"] != target_cat and item["id"] != target_orig.product_id
+            ]
+            if not cross_candidates:
+                raise ValueError(f"No cross-category candidates found for item {target_orig.product_id}")
+
             arch_key = orig_hist.archetype.lower()
             replacement_id = self.cross_category_pool.get(
                 "athletic" if "athletic" in arch_key else "tech" if "tech" in arch_key else "general"
             )
-            if replacement_id == target_orig.product_id:
-                replacement_id = VERIFIED_ITEMS["COACH_TABBY_BAG"]["id"]
+            rep_meta = ITEM_TO_META.get(replacement_id)
+            if not rep_meta or replacement_id == target_orig.product_id or (target_cat and rep_meta["cat"] == target_cat):
+                replacement_id = cross_candidates[0]
+
             target_mutated.product_id = replacement_id
-            rationale = f"Replaced item {target_orig.product_id} with cross-category item {replacement_id} at position {pos_idx}."
+            rep_cat = ITEM_TO_META.get(replacement_id, {}).get("cat", "Unknown")
+            rationale = (
+                f"Replaced item {target_orig.product_id} ('{target_cat}') with cross-category item "
+                f"{replacement_id} ('{rep_cat}') at position {pos_idx}."
+            )
 
         elif mutation_type == MutationType.ITEM_REPLACEMENT_WITHIN_CATEGORY:
-            # Swap target item for a within-category sibling
-            replacement_id = self.within_category_pool.get(target_orig.product_id)
-            if not replacement_id or replacement_id == target_orig.product_id:
-                candidates = [
-                    VERIFIED_ITEMS["NIKE_DUNK_LOW"]["id"],
-                    VERIFIED_ITEMS["NIKE_JORDAN4_BRED"]["id"],
-                    VERIFIED_ITEMS["NIKE_PANTS"]["id"],
-                    VERIFIED_ITEMS["UNDER_ARMOUR_CHARGED"]["id"],
-                    VERIFIED_ITEMS["APPLE_IPAD_109"]["id"],
-                ]
-                replacement_id = next(c for c in candidates if c != target_orig.product_id)
+            # Swap target item for a verified within-category sibling
+            target_meta = ITEM_TO_META.get(target_orig.product_id)
+            if not target_meta:
+                raise ValueError(
+                    f"Cannot perform within-category replacement: item {target_orig.product_id} "
+                    f"is not in the verified catalog metadata."
+                )
+            target_cat = target_meta["cat"]
+            siblings = [
+                iid for iid in CATEGORY_TO_ITEMS.get(target_cat, [])
+                if iid != target_orig.product_id
+            ]
+            if not siblings:
+                raise ValueError(
+                    f"Cannot perform within-category replacement: category '{target_cat}' "
+                    f"has no valid distinct sibling item in the verified catalog."
+                )
+            siblings.sort()
+            replacement_id = siblings[0]
             target_mutated.product_id = replacement_id
-            rationale = f"Replaced item {target_orig.product_id} with within-category item {replacement_id} at position {pos_idx}."
+            rationale = (
+                f"Replaced item {target_orig.product_id} with verified within-category "
+                f"sibling {replacement_id} (category: '{target_cat}') at position {pos_idx}."
+            )
 
         elif mutation_type == MutationType.ACTION_TYPE_SWAP:
             # Change action type (viewItem <-> addToCart) while preserving item
@@ -145,12 +172,23 @@ class ControlledMutator:
             rationale = f"Changed action type from {target_orig.action_type.value} to {new_type.value} on item {target_orig.product_id}."
 
         else:  # POSITION_EARLY
-            # Cross-category swap at position 0 (earliest event)
-            replacement_id = VERIFIED_ITEMS["COACH_TABBY_BAG"]["id"]
-            if replacement_id == target_orig.product_id:
-                replacement_id = VERIFIED_ITEMS["PS5_CONTROLLER_PEARL"]["id"]
+            # Early position intervention (position 0): cross-category swap
+            target_meta = ITEM_TO_META.get(target_orig.product_id)
+            target_cat = target_meta["cat"] if target_meta else None
+            cross_candidates = [
+                item["id"] for item in VERIFIED_ITEMS.values()
+                if item["cat"] != target_cat and item["id"] != target_orig.product_id
+            ]
+            pref_id = VERIFIED_ITEMS["COACH_TABBY_BAG"]["id"]
+            if pref_id == target_orig.product_id or (target_meta and target_meta["cat"] == "Luxury Bags"):
+                pref_id = VERIFIED_ITEMS["PS5_CONTROLLER_PEARL"]["id"]
+            replacement_id = pref_id if pref_id in cross_candidates else cross_candidates[0]
             target_mutated.product_id = replacement_id
-            rationale = f"Early-position mutation at index 0: replaced {target_orig.product_id} with luxury item {replacement_id}."
+            rep_cat = ITEM_TO_META.get(replacement_id, {}).get("cat", "Unknown")
+            rationale = (
+                f"Early-position mutation at index 0: replaced {target_orig.product_id} ('{target_cat}') "
+                f"with {rep_cat} item {replacement_id}."
+            )
 
         mutated_actions[pos_idx] = target_mutated
 

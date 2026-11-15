@@ -9,6 +9,7 @@ class ActionType(str, Enum):
     VIEW_ITEM = "viewItem"
     ADD_TO_CART = "addToCart"
     SEARCH = "search"
+    ORDER = "order"
 
 
 class MutationType(str, Enum):
@@ -40,6 +41,8 @@ class BehavioralAction(BaseModel):
             return {"type": "search", "query": self.query or ""}
         elif self.action_type == ActionType.ADD_TO_CART:
             return {"type": "addToCart", "product": self.product_id or ""}
+        elif self.action_type == ActionType.ORDER:
+            return {"type": "order", "product": self.product_id or ""}
         else:
             return {"type": "viewItem", "product": self.product_id or ""}
 
@@ -81,6 +84,7 @@ class PredictionItem(BaseModel):
     id: str
     name: str
     score: float
+    model_score: Optional[float] = None
     prob: Optional[float] = None
     rank: int
     brand: Optional[str] = None
@@ -117,13 +121,18 @@ class SensitivityMetrics(BaseModel):
     top1_changed: bool
     top1_original_id: Optional[str] = None
     top1_mutated_id: Optional[str] = None
-    top1_prob_delta: Optional[float] = None
+    top1_prob_delta: Optional[float] = None  # Populated only when calibrated probabilities are present
+    top1_score_delta: Optional[float] = None  # Delta between raw model scores
     jaccard_top3: float
     jaccard_top5: float
     jaccard_top10: float
-    rank_displacement_avg: float
+    shared_item_count: int = 0
+    rank_displacement_shared: Optional[float] = None  # Rank displacement over shared items (None when disjoint)
+    rank_displacement_penalized: float = 0.0  # Penalized rank displacement including evicted & new items
+    rank_displacement_avg: Optional[float] = None  # Kept for backward compatibility (None when disjoint)
     spearman_correlation: Optional[float] = None
-    prob_tvd_shared: Optional[float] = None  # Total variation distance on shared items
+    prob_tvd_shared: Optional[float] = None  # Total variation distance on shared items (valid on probs in [0, 1])
+    score_l1_shared: Optional[float] = None  # Mean absolute L1 delta on raw model scores for shared items
     price_mean_delta: Optional[float] = None
     category_shifted: bool = False
 
@@ -154,7 +163,80 @@ class ExperimentSummary(BaseModel):
     avg_jaccard_top5: float
     avg_jaccard_top10: float
     avg_rank_displacement: float
+    avg_rank_displacement_penalized: Optional[float] = None
     avg_prob_tvd: float
+    avg_score_l1: Optional[float] = None
     by_mutation_type: Dict[str, Dict[str, float]]
     by_position: Dict[str, Dict[str, float]]
     investigated_case_id: Optional[str] = None
+
+
+class JourneyEventInput(BaseModel):
+    action_type: str = "view"  # "view", "search", "order", "addToCart"
+    product_id: Optional[str] = None
+    query: Optional[str] = None
+    offset_ms: Optional[int] = None
+
+
+class JourneySimulateRequest(BaseModel):
+    events: List[JourneyEventInput]
+    limit: int = 10
+    market: str = "us"
+    mode: str = "sdk"  # "sdk", "live", "mock"
+    catalog_id: str = "retail_catalog_500k"
+
+
+class CounterfactualCompareRequest(BaseModel):
+    original_events: List[JourneyEventInput]
+    mutated_events: List[JourneyEventInput]
+    limit: int = 10
+    market: str = "us"
+    mode: str = "sdk"  # "sdk", "live", "mock"
+    mutation_description: Optional[str] = "Counterfactual Single-Action Mutation"
+    catalog_id: str = "retail_catalog_500k"
+
+
+class SimilarItemRequest(BaseModel):
+    item_id: str
+    limit: int = 10
+    catalog_id: str = "retail_catalog_500k"
+    market: str = "us"
+    mode: str = "sdk"
+
+
+class ItemTransitionShared(BaseModel):
+    product_id: str
+    name: str
+    brand: Optional[str] = None
+    original_rank: int
+    counterfactual_rank: int
+    rank_delta: int  # counterfactual_rank - original_rank
+    original_score: Optional[float] = None
+    counterfactual_score: Optional[float] = None
+    score_delta: Optional[float] = None
+
+
+class ItemTransitionEvicted(BaseModel):
+    product_id: str
+    name: str
+    brand: Optional[str] = None
+    original_rank: int
+    original_score: Optional[float] = None
+
+
+class ItemTransitionNew(BaseModel):
+    product_id: str
+    name: str
+    brand: Optional[str] = None
+    counterfactual_rank: int
+    counterfactual_score: Optional[float] = None
+
+
+class ItemTransitionsSummary(BaseModel):
+    shared: List[ItemTransitionShared] = Field(default_factory=list)
+    evicted: List[ItemTransitionEvicted] = Field(default_factory=list)
+    new: List[ItemTransitionNew] = Field(default_factory=list)
+    shared_count: int = 0
+    evicted_count: int = 0
+    new_count: int = 0
+

@@ -1,13 +1,127 @@
 """Automated tests for FastAPI endpoints in BehaviorGPT Counterfactual Sensitivity Lab."""
 
+import inspect
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from fastapi.testclient import TestClient
-from behavior_lab.api import app
+from fastapi import HTTPException
+from behavior_lab.api import (
+    app,
+    get_summary,
+    get_cases,
+    get_case_detail,
+    get_investigation,
+    get_dashboard,
+    get_catalog_items,
+    simulate_journey,
+    compare_counterfactual,
+    get_similar_items_endpoint,
+    post_similar_items_endpoint,
+    run_interactive,
+    InteractiveHistoryRequest,
+    lifespan,
+)
+from behavior_lab.models import (
+    CounterfactualCompareRequest,
+    JourneySimulateRequest,
+    SimilarItemRequest,
+)
+
+
+class MockResponse:
+    def __init__(self, status_code: int, data: dict = None, text: str = ""):
+        self.status_code = status_code
+        self._data = data or {}
+        self.text = text or (json.dumps(data) if data is not None else "")
+
+    def json(self):
+        return self._data
+
+
+def _drive_coro(res):
+    if inspect.iscoroutine(res):
+        while True:
+            try:
+                res.send(None)
+            except StopIteration as e:
+                return e.value
+    return res
+
+
+class DirectClient:
+    """Fast, deterministic test client directly invoking FastAPI endpoints.
+
+    Avoids AnyIO BlockingPortal loopback socket synchronization hangs on Windows.
+    """
+
+    def get(self, path: str):
+        if path == "/api/summary":
+            return MockResponse(200, get_summary())
+        elif path == "/api/catalog/items":
+            return MockResponse(200, get_catalog_items())
+        elif path.startswith("/api/items/") and path.endswith("/similar"):
+            parts = path.split("/")
+            item_id = parts[3]
+            try:
+                val = _drive_coro(get_similar_items_endpoint(item_id=item_id, mode="mock"))
+                return MockResponse(200, val)
+            except HTTPException as e:
+                return MockResponse(e.status_code, {"detail": e.detail})
+        elif path.startswith("/api/cases?"):
+            limit = 50
+            if "limit=" in path:
+                limit = int(path.split("limit=")[1].split("&")[0])
+            return MockResponse(200, get_cases(limit=limit))
+        elif path == "/api/cases":
+            return MockResponse(200, get_cases())
+        elif path.startswith("/api/cases/"):
+            case_id = path.replace("/api/cases/", "")
+            try:
+                return MockResponse(200, get_case_detail(case_id))
+            except HTTPException as e:
+                return MockResponse(e.status_code, {"detail": e.detail})
+        elif path == "/api/investigation":
+            return MockResponse(200, get_investigation())
+        elif path == "/":
+            resp = get_dashboard()
+            return MockResponse(resp.status_code, text=resp.body.decode("utf-8"))
+        return MockResponse(404, {"detail": "Not found"})
+
+    def post(self, path: str, json: dict = None):
+        if path == "/api/run-interactive":
+            try:
+                req = InteractiveHistoryRequest(**(json or {}))
+                val = _drive_coro(run_interactive(req))
+                return MockResponse(200, val)
+            except HTTPException as e:
+                return MockResponse(e.status_code, {"detail": e.detail})
+        elif path == "/api/journey/simulate":
+            try:
+                req = JourneySimulateRequest(**(json or {}))
+                val = _drive_coro(simulate_journey(req))
+                return MockResponse(200, val)
+            except HTTPException as e:
+                return MockResponse(e.status_code, {"detail": e.detail})
+        elif path == "/api/counterfactual/compare":
+            try:
+                req = CounterfactualCompareRequest(**(json or {}))
+                val = _drive_coro(compare_counterfactual(req))
+                return MockResponse(200, val)
+            except HTTPException as e:
+                return MockResponse(e.status_code, {"detail": e.detail})
+        elif path == "/api/items/similar":
+            try:
+                req = SimilarItemRequest(**(json or {}))
+                val = _drive_coro(post_similar_items_endpoint(req))
+                return MockResponse(200, val)
+            except HTTPException as e:
+                return MockResponse(e.status_code, {"detail": e.detail})
+        return MockResponse(404, {"detail": "Not found"})
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    return DirectClient()
 
 
 def test_api_summary(client):
@@ -68,6 +182,37 @@ def test_dashboard_ui(client):
     assert response.status_code == 200
     assert "BehaviorGPT Counterfactual Sensitivity Lab" in response.text
     assert "Paired Case Inspector" in response.text
+
+
+def test_dashboard_ui_stage_b2_sections(client):
+    """GET / contains all three flagship Stage B2 interactive sections."""
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.text
+
+    # 1. Behavioral Journey Simulator
+    assert "Behavioral Journey Simulator" in html
+    assert "tab-journey" in html
+    assert "builderActionType" in html
+    assert "builderProductSelect" in html
+    assert "runJourneySimulation()" in html
+
+    # 2. Counterfactual Playground
+    assert "Counterfactual Sensitivity Playground" in html
+    assert "tab-playground" in html
+    assert "cfTimelineA" in html
+    assert "cfTimelineB" in html
+    assert "runCounterfactualComparison()" in html
+    assert "Item Transition Dynamics" in html
+    assert "cfTransitionsTableBody" in html
+
+    # 3. Similar Item Explorer
+    assert "Catalog Similar Item Explorer" in html
+    assert "tab-similar" in html
+    assert "similarSeedSelect" in html
+    assert "similarSeedId" in html
+    assert "runSimilarItemsQuery()" in html
+    assert "similar_items()" in html
 
 
 def test_run_interactive_success(client, monkeypatch):
@@ -226,4 +371,348 @@ def test_api_summary_unverified_metadata(client):
     assert data["is_model_name_verified"] is False
     assert data["is_catalog_id_verified"] is False
     assert data["metadata_provenance"]["model_name_status"] == "unverified_local_descriptor"
+
+
+def test_run_interactive_sdk_mode_uses_async_adapter(client, monkeypatch):
+    """Verify that mode='sdk' in /api/run-interactive uses AsyncBehaviorGPTSDKAdapter."""
+    from behavior_lab.models import InferenceOutput, PredictionItem
+    from behavior_lab.sdk_adapter import AsyncBehaviorGPTSDKAdapter
+
+    monkeypatch.setenv("UNBOXAI_API_KEY", "test_key")
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "__init__", lambda self, market="us", **kw: None)
+
+    mock_predict = AsyncMock()
+    mock_predict.return_value = InferenceOutput(
+        case_id="interactive_sdk",
+        variant="Sequence A",
+        items=[PredictionItem(id="item_sdk", name="SDK Item", score=1.5, rank=1)],
+        latency_ms=15.0,
+        provider="behaviorgpt_sdk_async",
+        status_code=200,
+    )
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "predict", mock_predict)
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "aclose", AsyncMock())
+
+    payload = {
+        "history_a_items": ["item_1"],
+        "history_b_items": ["item_2"],
+        "mode": "sdk",
+    }
+    resp = client.post("/api/run-interactive", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "behaviorgpt_sdk"
+    assert mock_predict.await_count == 2
+
+
+def test_api_lifespan_lifecycle():
+    """Verify that lifespan initializes and cleanly closes app.state.sdk_adapter."""
+    mock_adapter = MagicMock()
+    mock_adapter.aclose = AsyncMock()
+
+    def run_coro(coro):
+        while True:
+            try:
+                coro.send(None)
+            except StopIteration as e:
+                return e.value
+
+    async def scenario():
+        with patch.dict("os.environ", {"UNBOXAI_API_KEY": "test_key"}):
+            with patch("behavior_lab.sdk_adapter.AsyncBehaviorGPTSDKAdapter", return_value=mock_adapter):
+                async with lifespan(app):
+                    assert app.state.sdk_adapter is mock_adapter
+                mock_adapter.aclose.assert_awaited_once()
+
+    run_coro(scenario())
+
+
+def test_api_catalog_items(client):
+    """GET /api/catalog/items returns verified items and categories."""
+    resp = client.get("/api/catalog/items")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["catalog_id"] == "retail_catalog_500k"
+    assert data["total_items"] == 16
+    assert len(data["items"]) == 16
+    assert "Footwear" in data["categories"]
+    assert "Gaming" in data["categories"]
+    assert "Electronics" in data["categories"]
+    # Check that item metadata includes has_similar_items
+    dunk = next(it for it in data["items"] if it["key"] == "NIKE_DUNK_LOW")
+    assert dunk["has_similar_items"] is True
+    assert dunk["id"] == "paB0D93VKPPK"
+
+
+def test_journey_simulate_validation(client):
+    """POST /api/journey/simulate validates empty and malformed events."""
+    # Empty events
+    resp = client.post("/api/journey/simulate", json={"events": []})
+    assert resp.status_code == 400
+
+    # Search event missing query
+    resp = client.post(
+        "/api/journey/simulate",
+        json={"events": [{"action_type": "search", "query": ""}]},
+    )
+    assert resp.status_code == 400
+
+    # View event missing product_id
+    resp = client.post(
+        "/api/journey/simulate",
+        json={"events": [{"action_type": "view", "product_id": ""}]},
+    )
+    assert resp.status_code == 400
+
+
+def test_journey_simulate_mock_mode(client):
+    """POST /api/journey/simulate succeeds with mock provider."""
+    payload = {
+        "events": [
+            {"action_type": "view", "product_id": "paB07R17XQD2"},
+            {"action_type": "search", "query": "running shoes"},
+            {"action_type": "order", "product_id": "paB0D93VKPPK"},
+        ],
+        "limit": 5,
+        "mode": "mock",
+    }
+    resp = client.post("/api/journey/simulate", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "mock"
+    assert data["event_count"] == 3
+    assert len(data["items"]) == 5
+    assert data["items"][0]["rank"] == 1
+    assert "latency_ms" in data
+    assert data["provenance"]["mode"] == "mock"
+
+
+def test_journey_simulate_sdk_mode(client, monkeypatch):
+    """POST /api/journey/simulate uses AsyncBehaviorGPTSDKAdapter in sdk mode."""
+    from behavior_lab.models import InferenceOutput, PredictionItem
+    from behavior_lab.sdk_adapter import AsyncBehaviorGPTSDKAdapter
+
+    monkeypatch.setenv("UNBOXAI_API_KEY", "test_key")
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "__init__", lambda self, market="us", **kw: None)
+
+    mock_predict = AsyncMock()
+    mock_predict.return_value = InferenceOutput(
+        case_id="journey_sim",
+        variant="Journey Simulation",
+        items=[
+            PredictionItem(id="p1", name="Product 1", score=2.5, model_score=2.5, rank=1),
+            PredictionItem(id="p2", name="Product 2", score=1.8, model_score=1.8, rank=2),
+        ],
+        latency_ms=25.0,
+        provider="behaviorgpt_sdk_async",
+        status_code=200,
+    )
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "predict", mock_predict)
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "aclose", AsyncMock())
+
+    payload = {
+        "events": [{"action_type": "view", "product_id": "paB07R17XQD2"}],
+        "limit": 2,
+        "mode": "sdk",
+    }
+    resp = client.post("/api/journey/simulate", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "behaviorgpt_sdk_async"
+    assert len(data["items"]) == 2
+    assert data["items"][0]["model_score"] == 2.5
+    mock_predict.assert_awaited_once()
+
+
+def test_journey_simulate_upstream_error(client, monkeypatch):
+    """POST /api/journey/simulate returns 502 Bad Gateway on upstream error."""
+    from behavior_lab.models import InferenceOutput
+    from behavior_lab.sdk_adapter import AsyncBehaviorGPTSDKAdapter
+
+    monkeypatch.setenv("UNBOXAI_API_KEY", "test_key")
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "__init__", lambda self, market="us", **kw: None)
+
+    mock_predict = AsyncMock()
+    mock_predict.return_value = InferenceOutput(
+        case_id="journey_sim",
+        variant="Journey Simulation",
+        items=[],
+        latency_ms=5.0,
+        provider="behaviorgpt_sdk_async",
+        status_code=500,
+        error_message="Internal Server Error from upstream BehaviorGPT",
+    )
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "predict", mock_predict)
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "aclose", AsyncMock())
+
+    payload = {
+        "events": [{"action_type": "view", "product_id": "paB07R17XQD2"}],
+        "mode": "sdk",
+    }
+    resp = client.post("/api/journey/simulate", json=payload)
+    assert resp.status_code == 502
+    assert "Inference failed" in resp.json()["detail"]
+
+
+def test_counterfactual_compare_mock_mode(client):
+    """POST /api/counterfactual/compare succeeds with mock mode and computes transitions."""
+    payload = {
+        "original_events": [{"action_type": "view", "product_id": "paB07R17XQD2"}],
+        "mutated_events": [{"action_type": "view", "product_id": "paB0DK3YY682"}],
+        "limit": 5,
+        "mode": "mock",
+        "mutation_description": "Cross-Category Swap",
+    }
+    resp = client.post("/api/counterfactual/compare", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "mock"
+    assert "metrics" in data
+    assert "jaccard_top5" in data["metrics"]
+    assert "item_transitions" in data
+    assert "shared" in data["item_transitions"]
+    assert "evicted" in data["item_transitions"]
+    assert "new" in data["item_transitions"]
+
+
+def test_counterfactual_compare_sdk_mode_with_transitions(client, monkeypatch):
+    """POST /api/counterfactual/compare correctly computes shared/evicted/new transitions and metrics."""
+    from behavior_lab.models import InferenceOutput, PredictionItem
+    from behavior_lab.sdk_adapter import AsyncBehaviorGPTSDKAdapter
+
+    monkeypatch.setenv("UNBOXAI_API_KEY", "test_key")
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "__init__", lambda self, market="us", **kw: None)
+
+    # Sequence A produces [A, B, C]
+    # Sequence B produces [B, C, D]
+    out_a = InferenceOutput(
+        case_id="case_cf",
+        variant="Original",
+        items=[
+            PredictionItem(id="item_A", name="Item A", score=3.0, model_score=3.0, rank=1),
+            PredictionItem(id="item_B", name="Item B", score=2.0, model_score=2.0, rank=2),
+            PredictionItem(id="item_C", name="Item C", score=1.0, model_score=1.0, rank=3),
+        ],
+        latency_ms=10.0,
+        provider="behaviorgpt_sdk_async",
+        status_code=200,
+    )
+    out_b = InferenceOutput(
+        case_id="case_cf",
+        variant="Counterfactual",
+        items=[
+            PredictionItem(id="item_B", name="Item B", score=2.5, model_score=2.5, rank=1),  # rank 2 -> 1
+            PredictionItem(id="item_C", name="Item C", score=1.8, model_score=1.8, rank=2),  # rank 3 -> 2
+            PredictionItem(id="item_D", name="Item D", score=1.2, model_score=1.2, rank=3),  # new
+        ],
+        latency_ms=12.0,
+        provider="behaviorgpt_sdk_async",
+        status_code=200,
+    )
+
+    mock_predict = AsyncMock(side_effect=[out_a, out_b])
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "predict", mock_predict)
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "aclose", AsyncMock())
+
+    payload = {
+        "original_events": [{"action_type": "view", "product_id": "item_1"}],
+        "mutated_events": [{"action_type": "view", "product_id": "item_2"}],
+        "limit": 3,
+        "mode": "sdk",
+    }
+    resp = client.post("/api/counterfactual/compare", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "behaviorgpt_sdk_async"
+
+    # Verify transitions
+    transitions = data["item_transitions"]
+    assert transitions["shared_count"] == 2  # item_B and item_C
+    assert transitions["evicted_count"] == 1  # item_A
+    assert transitions["new_count"] == 1  # item_D
+
+    evicted_ids = [it["product_id"] for it in transitions["evicted"]]
+    assert "item_A" in evicted_ids
+
+    new_ids = [it["product_id"] for it in transitions["new"]]
+    assert "item_D" in new_ids
+
+    shared_b = next(it for it in transitions["shared"] if it["product_id"] == "item_B")
+    assert shared_b["original_rank"] == 2
+    assert shared_b["counterfactual_rank"] == 1
+    assert shared_b["rank_delta"] == -1  # moved up by 1 rank
+
+    # Verify metrics
+    metrics = data["metrics"]
+    assert metrics["shared_item_count"] == 2
+    assert metrics["rank_displacement_shared"] is not None
+    assert metrics["rank_displacement_penalized"] > 0
+
+
+def test_similar_items_mock_and_post(client):
+    """GET and POST /api/items/{item_id}/similar work in mock mode."""
+    # GET
+    resp = client.get("/api/items/paB0D93VKPPK/similar")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "mock"
+    assert data["seed_item"]["id"] == "paB0D93VKPPK"
+    assert len(data["similar_items"]) == 10
+
+    # POST
+    resp_post = client.post(
+        "/api/items/similar",
+        json={"item_id": "paB0D93VKPPK", "limit": 4, "mode": "mock"},
+    )
+    assert resp_post.status_code == 200
+    data_post = resp_post.json()
+    assert len(data_post["similar_items"]) == 4
+    assert data_post["similar_items"][0]["rank"] == 1
+
+
+def test_similar_items_sdk_mode(client, monkeypatch):
+    """GET /api/items/{item_id}/similar calls AsyncBehaviorGPTSDKAdapter.similar_items."""
+    from behavior_lab.models import PredictionItem
+    from behavior_lab.sdk_adapter import AsyncBehaviorGPTSDKAdapter
+
+    monkeypatch.setenv("UNBOXAI_API_KEY", "test_key")
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "__init__", lambda self, market="us", **kw: None)
+
+    mock_similar = AsyncMock()
+    mock_similar.return_value = [
+        PredictionItem(id="sim_1", name="Air Jordan 1", score=2.1, model_score=2.1, rank=1),
+        PredictionItem(id="sim_2", name="Air Jordan 3", score=1.9, model_score=1.9, rank=2),
+    ]
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "similar_items", mock_similar)
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "aclose", AsyncMock())
+
+    from behavior_lab.api import get_similar_items_endpoint
+
+    res = _drive_coro(get_similar_items_endpoint(item_id="paB0D93VKPPK", mode="sdk"))
+    assert res["provider"] == "behaviorgpt_sdk_async"
+    assert len(res["similar_items"]) == 2
+    assert res["seed_item"]["key"] == "NIKE_DUNK_LOW"
+    mock_similar.assert_awaited_once_with("paB0D93VKPPK", limit=10, catalog_id="retail_catalog_500k")
+
+
+def test_similar_items_sdk_not_found_404(client, monkeypatch):
+    """GET /api/items/{item_id}/similar returns 404 when item not found in catalog."""
+    from behavior_lab.sdk_adapter import AsyncBehaviorGPTSDKAdapter
+    from behaviorgpt._exceptions import UnboxAIError
+
+    monkeypatch.setenv("UNBOXAI_API_KEY", "test_key")
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "__init__", lambda self, market="us", **kw: None)
+
+    mock_similar = AsyncMock(side_effect=UnboxAIError("API Error: Item 'unknown_id' not found in catalog 'retail_catalog_500k'."))
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "similar_items", mock_similar)
+    monkeypatch.setattr(AsyncBehaviorGPTSDKAdapter, "aclose", AsyncMock())
+
+    from behavior_lab.api import get_similar_items_endpoint
+
+    with pytest.raises(HTTPException) as exc_info:
+        _drive_coro(get_similar_items_endpoint(item_id="unknown_id", mode="sdk"))
+    assert exc_info.value.status_code == 404
+    assert "not found in catalog" in exc_info.value.detail
+
+
 

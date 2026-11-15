@@ -4,7 +4,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests: 31 Passed](https://img.shields.io/badge/tests-31%20passed-success.svg)](tests/)
+[![Tests: 51 Passed](https://img.shields.io/badge/tests-51%20passed-success.svg)](tests/)
 [![Inference: BehaviorGPT SDK](https://img.shields.io/badge/inference-BehaviorGPT%20SDK-blueviolet.svg)](https://github.com/Unbox-AI/behaviorgpt)
 
 ---
@@ -99,15 +99,12 @@ The system supports three inference modes through a unified `InferenceProvider` 
 git clone https://github.com/ShubhamYadav27/BehaviorGPTCounterfactualSensitivityLab.git
 cd BehaviorGPTCounterfactualSensitivityLab
 
-# Install the official BehaviorGPT SDK
-git clone https://github.com/Unbox-AI/behaviorgpt.git repo_temp
-pip install -e repo_temp
-
-# Install project dependencies
+# Install dependencies and official BehaviorGPT SDK
 pip install -r requirements.txt
+pip install behaviorgpt
 ```
 
-### 2. Run Automated Test Suite (31 Tests)
+### 2. Run Automated Regression Suite (51 Tests)
 ```bash
 python -m pytest tests/ -v
 ```

@@ -27,9 +27,11 @@ VERIFIED_ITEMS = {
     "APPLE_IPAD_109": {"id": "paB0DK3YY682", "brand": "Apple", "cat": "Electronics", "price": 277.0},
     "SAMSUNG_GALAXY_TAB": {"id": "paB0DJ5796F6", "brand": "Samsung", "cat": "Electronics", "price": 450.0},
     "PS5_CONTROLLER_PEARL": {"id": "paB0DJ1VN1LF", "brand": "PlayStation", "cat": "Gaming", "price": 66.0},
+    "XBOX_WIRELESS_CONTROLLER": {"id": "paB0859XT328", "brand": "Xbox", "cat": "Gaming", "price": 59.0},
 
     # Luxury Fashion & Accessories
     "COACH_TABBY_BAG": {"id": "paB0D8CSSQ7J", "brand": "Coach", "cat": "Luxury Bags", "price": 395.0},
+    "COACH_SOFT_TABBY": {"id": "paB0CRM723D6", "brand": "Coach", "cat": "Luxury Bags", "price": 450.0},
 
     # Home & Kitchen
     "LOLOI_ACCENT_RUG": {"id": "paB0CRLY5MYP", "brand": "Loloi", "cat": "Home", "price": 81.0},
@@ -71,10 +73,11 @@ class SyntheticHistoryGenerator:
                 VERIFIED_ITEMS["APPLE_IPAD_109"]["id"],
                 VERIFIED_ITEMS["SAMSUNG_GALAXY_TAB"]["id"],
                 VERIFIED_ITEMS["PS5_CONTROLLER_PEARL"]["id"],
+                VERIFIED_ITEMS["XBOX_WIRELESS_CONTROLLER"]["id"],
             ],
             "luxury": [
                 VERIFIED_ITEMS["COACH_TABBY_BAG"]["id"],
-                VERIFIED_ITEMS["NIKE_AIR_JORDAN_RETRO"]["id"],
+                VERIFIED_ITEMS["COACH_SOFT_TABBY"]["id"],
             ],
             "home": [
                 VERIFIED_ITEMS["LOLOI_ACCENT_RUG"]["id"],

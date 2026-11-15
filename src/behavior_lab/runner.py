@@ -8,7 +8,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 from behavior_lab.client import BehaviorGPTClient
 from behavior_lab.dataset_generator import SyntheticHistoryGenerator
@@ -68,13 +68,15 @@ class ExperimentRunner:
     def __init__(
         self,
         mode: str = "live",
-        data_dir: str = "data",
+        data_dir: Optional[str] = None,
         limit: int = 10,
         seed: int = 42,
     ):
         if mode not in ("live", "mock", "sdk"):
             raise ValueError(f"Invalid mode '{mode}'. Must be 'live', 'mock', or 'sdk'.")
         self.mode = mode
+        if data_dir is None:
+            data_dir = "data/sdk_results" if mode == "sdk" else "data"
         self.data_dir = Path(data_dir)
         self.limit = limit
         self.seed = seed
@@ -170,28 +172,41 @@ class ExperimentRunner:
 
         avg_j5 = sum(r.metrics.jaccard_top5 for r in results) / total
         avg_j10 = sum(r.metrics.jaccard_top10 for r in results) / total
-        avg_disp = sum(r.metrics.rank_displacement_avg for r in results) / total
+
+        disp_vals = [r.metrics.rank_displacement_avg for r in results if r.metrics.rank_displacement_avg is not None]
+        avg_disp = sum(disp_vals) / len(disp_vals) if disp_vals else 0.0
+
+        penalized_disp_vals = [r.metrics.rank_displacement_penalized for r in results if r.metrics.rank_displacement_penalized is not None]
+        avg_penalized_disp = sum(penalized_disp_vals) / len(penalized_disp_vals) if penalized_disp_vals else 0.0
 
         tvd_vals = [r.metrics.prob_tvd_shared for r in results if r.metrics.prob_tvd_shared is not None]
         avg_tvd = sum(tvd_vals) / len(tvd_vals) if tvd_vals else 0.0
 
+        score_l1_vals = [r.metrics.score_l1_shared for r in results if r.metrics.score_l1_shared is not None]
+        avg_score_l1 = sum(score_l1_vals) / len(score_l1_vals) if score_l1_vals else None
+
         # Breakdowns by mutation type
-        by_mut: Dict[str, Dict[str, float]] = {}
+        by_mut: Dict[str, Dict[str, Any]] = {}
         for r in results:
             m_key = r.mutation_type.value
             if m_key not in by_mut:
-                by_mut[m_key] = {"count": 0, "top1_flips": 0, "sum_j5": 0.0, "sum_disp": 0.0}
+                by_mut[m_key] = {"count": 0, "top1_flips": 0, "sum_j5": 0.0, "disp_vals": [], "pen_disp_vals": []}
             by_mut[m_key]["count"] += 1
             if r.metrics.top1_changed:
                 by_mut[m_key]["top1_flips"] += 1
             by_mut[m_key]["sum_j5"] += r.metrics.jaccard_top5
-            by_mut[m_key]["sum_disp"] += r.metrics.rank_displacement_avg
+            if r.metrics.rank_displacement_avg is not None:
+                by_mut[m_key]["disp_vals"].append(r.metrics.rank_displacement_avg)
+            by_mut[m_key]["pen_disp_vals"].append(r.metrics.rank_displacement_penalized)
 
         for m_key, data in by_mut.items():
             cnt = data["count"]
+            disp_list = data.pop("disp_vals")
+            pen_disp_list = data.pop("pen_disp_vals")
             data["top1_flip_rate"] = round(data["top1_flips"] / cnt, 3)
             data["avg_jaccard_5"] = round(data["sum_j5"] / cnt, 3)
-            data["avg_displacement"] = round(data["sum_disp"] / cnt, 3)
+            data["avg_displacement"] = round(sum(disp_list) / len(disp_list), 3) if disp_list else 0.0
+            data["avg_displacement_penalized"] = round(sum(pen_disp_list) / len(pen_disp_list), 3) if pen_disp_list else 0.0
 
         # Breakdowns by position
         by_pos: Dict[str, Dict[str, float]] = {}
@@ -241,7 +256,9 @@ class ExperimentRunner:
             avg_jaccard_top5=round(avg_j5, 4),
             avg_jaccard_top10=round(avg_j10, 4),
             avg_rank_displacement=round(avg_disp, 4),
+            avg_rank_displacement_penalized=round(avg_penalized_disp, 4),
             avg_prob_tvd=round(avg_tvd, 6),
+            avg_score_l1=round(avg_score_l1, 6) if avg_score_l1 is not None else None,
             by_mutation_type=by_mut,
             by_position=by_pos,
             investigated_case_id=interesting_id,

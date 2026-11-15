@@ -10,3 +10,5 @@ venv/
 scratch_catalog_items.json
 repo_temp/
 data/sdk_results/
+
+src/behaviorgpt_counterfactual_lab.egg-info/

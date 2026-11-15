@@ -133,7 +133,12 @@ def test_metric_calculations_known_analytical_cases():
     metrics_disjoint = SensitivityMetricsCalculator.compute(out_a, out_c)
     assert metrics_disjoint.top1_changed is True
     assert metrics_disjoint.jaccard_top3 == 0.0
-    assert metrics_disjoint.rank_displacement_avg == 0.0
+    # Disjoint lists have zero shared items; shared rank displacement is None, not 0.0
+    assert metrics_disjoint.rank_displacement_avg is None
+    assert metrics_disjoint.rank_displacement_shared is None
+    assert metrics_disjoint.shared_item_count == 0
+    # Penalized rank displacement applies K+1 penalty rank to evicted/new items
+    assert metrics_disjoint.rank_displacement_penalized == 2.0
 
     # Case 3: Reordered items -> item 1 and item 2 swapped ranks
     items_d = [
