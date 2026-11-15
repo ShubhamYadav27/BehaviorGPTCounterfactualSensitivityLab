@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 load_dotenv()
@@ -753,6 +754,11 @@ async def run_interactive(req: InteractiveHistoryRequest):
                 )
         provider_label = "behaviorgpt_sdk"
         is_async = True
+    elif req.mode == "mock":
+        provider = BehaviorGPTClient(mode="mock", market=req.market)
+        provider_label = "mock"
+        is_async = False
+        should_close_provider = True
     else:
         provider = BehaviorGPTClient(mode="live", market=req.market)
         provider_label = "showcase"
@@ -848,10 +854,28 @@ async def run_interactive(req: InteractiveHistoryRequest):
                 provider.close()
 
 
+@app.get("/index.html", response_class=HTMLResponse)
 @app.get("/", response_class=HTMLResponse)
 def get_dashboard():
+    """Serve the single-origin Behavioral Decision Explorer frontend."""
     dashboard_path = Path("web/index.html")
     if not dashboard_path.exists():
         return HTMLResponse("<h1>Dashboard under construction</h1>", status_code=200)
     with open(dashboard_path, "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint to verify single-origin FastAPI application availability."""
+    return {
+        "status": "ok",
+        "app": "BehaviorGPT Counterfactual Sensitivity Lab",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# Mount static assets directory without intercepting API routes or root
+_web_dir = Path("web")
+if _web_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_web_dir)), name="static")

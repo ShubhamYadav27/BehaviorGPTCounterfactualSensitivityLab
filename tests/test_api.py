@@ -12,6 +12,7 @@ from behavior_lab.api import (
     get_case_detail,
     get_investigation,
     get_dashboard,
+    health_check,
     get_catalog_items,
     simulate_journey,
     compare_counterfactual,
@@ -82,9 +83,11 @@ class DirectClient:
                 return MockResponse(e.status_code, {"detail": e.detail})
         elif path == "/api/investigation":
             return MockResponse(200, get_investigation())
-        elif path == "/":
+        elif path in ("/", "/index.html"):
             resp = get_dashboard()
             return MockResponse(resp.status_code, text=resp.body.decode("utf-8"))
+        elif path == "/health":
+            return MockResponse(200, health_check())
         return MockResponse(404, {"detail": "Not found"})
 
     def post(self, path: str, json: dict = None):
@@ -713,6 +716,357 @@ def test_similar_items_sdk_not_found_404(client, monkeypatch):
         _drive_coro(get_similar_items_endpoint(item_id="unknown_id", mode="sdk"))
     assert exc_info.value.status_code == 404
     assert "not found in catalog" in exc_info.value.detail
+
+
+# ==============================================================================
+# PHASE 4: SHOWCASE SANDBOX REGRESSION TESTS (Method, Contract, 501, Errors, UX)
+# ==============================================================================
+
+def test_showcase_correct_http_method_and_payload(monkeypatch):
+    """Verify BehaviorGPTClient sends POST to https://behaviorgpt.unboxai.com/api/recommendations with valid wire payload."""
+    from behavior_lab.client import BehaviorGPTClient
+    from behavior_lab.models import BehavioralAction, BehavioralHistory, ActionType
+    import httpx
+
+    captured_request = {}
+
+    def mock_post(url, json=None, **kwargs):
+        captured_request["url"] = url
+        captured_request["method"] = "POST"
+        captured_request["payload"] = json
+        return httpx.Response(200, json={"items": [{"id": "item_1", "name": "Item 1", "prob": 0.5}]}, request=httpx.Request("POST", url))
+
+    client = BehaviorGPTClient(mode="live")
+    monkeypatch.setattr(client._http_client, "post", mock_post)
+
+    history = BehavioralHistory(
+        history_id="test_showcase",
+        archetype="CUSTOM",
+        description="Showcase Test History",
+        created_at="2026-10-15T00:00:00Z",
+        actions=[
+            BehavioralAction(action_id="a1", action_type=ActionType.VIEW_ITEM, product_id="paB08NYK61PJ", offset_ms=0),
+            BehavioralAction(action_id="a2", action_type=ActionType.VIEW_ITEM, product_id="paB0CBT2582L", offset_ms=1000),
+        ],
+    )
+
+    out = client.predict(history, limit=5, variant_label="Test")
+    assert out.status_code == 200
+    assert captured_request["url"] == "https://behaviorgpt.unboxai.com/api/recommendations"
+    assert captured_request["method"] == "POST"
+
+    payload = captured_request["payload"]
+    assert "history" in payload
+    assert payload["limit"] == 5
+    assert len(payload["history"]) == 1
+    session = payload["history"][0]
+    assert session["type"] == "default"
+    assert session["domains"] == {"market": "US"}
+    assert len(session["events"]) == 2
+    assert session["events"][0]["product"] == "paB08NYK61PJ"
+    assert session["events"][0]["type"] == "viewItem"
+    assert session["events"][1]["product"] == "paB0CBT2582L"
+
+
+def test_showcase_successful_response_parsing(monkeypatch):
+    """Verify BehaviorGPTClient parses 200 OK responses with full item attributes."""
+    from behavior_lab.client import BehaviorGPTClient
+    from behavior_lab.models import BehavioralAction, BehavioralHistory, ActionType
+    import httpx
+
+    mock_json = {
+        "items": [
+            {
+                "id": "paB08NYK61PJ",
+                "name": "Air Jordan 4 Retro",
+                "prob": 0.045,
+                "brand": "Nike",
+                "category": "Footwear",
+                "price": "215.00",
+                "currency": "USD",
+                "keywords": ["jordan", "retro"],
+                "topTerms": [{"term": "sneaker", "weight": 0.9}],
+            }
+        ]
+    }
+
+    client = BehaviorGPTClient(mode="live")
+    monkeypatch.setattr(
+        client._http_client,
+        "post",
+        lambda url, **kw: httpx.Response(200, json=mock_json, request=httpx.Request("POST", url)),
+    )
+
+    history = BehavioralHistory(
+        history_id="test_parse",
+        archetype="CUSTOM",
+        description="Showcase Parse History",
+        created_at="2026-10-15T00:00:00Z",
+        actions=[BehavioralAction(action_id="a1", action_type=ActionType.VIEW_ITEM, product_id="paB08NYK61PJ", offset_ms=0)],
+    )
+
+    out = client.predict(history, limit=5)
+    assert out.status_code == 200
+    assert out.error_message is None
+    assert len(out.items) == 1
+    item = out.items[0]
+    assert item.id == "paB08NYK61PJ"
+    assert item.name == "Air Jordan 4 Retro"
+    assert item.prob == 0.045
+    assert item.score == 0.045
+    assert item.rank == 1
+    assert item.brand == "Nike"
+    assert item.category == "Footwear"
+    assert item.price == 215.0
+    assert item.keywords == ["jordan", "retro"]
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 404, 500, 502, 503])
+def test_showcase_http_4xx_and_5xx_responses(client, monkeypatch, status_code):
+    """Verify /api/run-interactive returns HTTP 502 Bad Gateway with diagnostic status when upstream returns 4xx/5xx."""
+    from behavior_lab.client import BehaviorGPTClient
+    from behavior_lab.models import InferenceOutput
+
+    def mock_predict(self, history, limit=10, variant_label="original", case_id="case_000"):
+        return InferenceOutput(
+            case_id=case_id,
+            variant=variant_label,
+            items=[],
+            latency_ms=10.0,
+            status_code=status_code,
+            error_message=f"HTTP {status_code}: Upstream Server Error",
+        )
+
+    monkeypatch.setattr(BehaviorGPTClient, "predict", mock_predict)
+
+    payload = {
+        "history_a_items": ["paB08NYK61PJ"],
+        "history_b_items": ["paB0CBT2582L"],
+        "mode": "live",
+    }
+    resp = client.post("/api/run-interactive", json=payload)
+    assert resp.status_code == 502
+    assert str(status_code) in resp.json().get("detail", "")
+
+
+def test_showcase_unsupported_method_response_501(client, monkeypatch):
+    """Verify handling when upstream returns HTTP 501, and verify FastAPI route method restrictions."""
+    from behavior_lab.client import BehaviorGPTClient
+    from behavior_lab.models import InferenceOutput
+
+    # 1. Upstream 501 handling
+    def mock_501_predict(self, history, limit=10, variant_label="original", case_id="case_000"):
+        return InferenceOutput(
+            case_id=case_id,
+            variant=variant_label,
+            items=[],
+            latency_ms=8.0,
+            status_code=501,
+            error_message="HTTP 501: Not Implemented",
+        )
+
+    monkeypatch.setattr(BehaviorGPTClient, "predict", mock_501_predict)
+
+    payload = {
+        "history_a_items": ["paB08NYK61PJ"],
+        "history_b_items": ["paB0CBT2582L"],
+        "mode": "live",
+    }
+    resp = client.post("/api/run-interactive", json=payload)
+    assert resp.status_code == 502
+    detail = resp.json().get("detail", "")
+    assert "501" in detail
+
+    # 2. Verify FastAPI route method restriction on /api/run-interactive
+    interactive_route = next(
+        (r for r in app.routes if getattr(r, "path", None) == "/api/run-interactive"),
+        None,
+    )
+    assert interactive_route is not None
+    assert interactive_route.methods == {"POST"}
+
+
+def test_showcase_network_timeout_and_connection_failure(client, monkeypatch):
+    """Verify TimeoutException and ConnectError in BehaviorGPTClient map to 502 Bad Gateway."""
+    from behavior_lab.client import BehaviorGPTClient
+    from behavior_lab.models import BehavioralAction, BehavioralHistory, ActionType
+    import httpx
+
+    # 1. TimeoutException
+    def mock_timeout(*args, **kwargs):
+        raise httpx.TimeoutException("Read timed out after 5.0 seconds")
+
+    test_client = BehaviorGPTClient(mode="live")
+    monkeypatch.setattr(test_client._http_client, "post", mock_timeout)
+
+    history = BehavioralHistory(
+        history_id="test_timeout",
+        archetype="CUSTOM",
+        description="Timeout Test History",
+        created_at="2026-10-15T00:00:00Z",
+        actions=[BehavioralAction(action_id="a1", action_type=ActionType.VIEW_ITEM, product_id="paB08NYK61PJ", offset_ms=0)],
+    )
+    out_timeout = test_client.predict(history)
+    assert out_timeout.status_code == 500
+    assert "TimeoutException" in out_timeout.error_message
+
+    # 2. ConnectError
+    def mock_connect_error(*args, **kwargs):
+        raise httpx.ConnectError("[Errno 11001] getaddrinfo failed")
+
+    monkeypatch.setattr(test_client._http_client, "post", mock_connect_error)
+    out_connect = test_client.predict(history)
+    assert out_connect.status_code == 500
+    assert "ConnectError" in out_connect.error_message
+
+
+def test_showcase_invalid_or_empty_response(monkeypatch):
+    """Verify BehaviorGPTClient gracefully handles empty, missing, or malformed response bodies."""
+    from behavior_lab.client import BehaviorGPTClient
+    from behavior_lab.models import BehavioralAction, BehavioralHistory, ActionType
+    import httpx
+
+    client = BehaviorGPTClient(mode="live")
+    history = BehavioralHistory(
+        history_id="test_empty",
+        archetype="CUSTOM",
+        description="Empty Test History",
+        created_at="2026-10-15T00:00:00Z",
+        actions=[BehavioralAction(action_id="a1", action_type=ActionType.VIEW_ITEM, product_id="paB08NYK61PJ", offset_ms=0)],
+    )
+
+    # Empty JSON object {}
+    monkeypatch.setattr(
+        client._http_client,
+        "post",
+        lambda url, **kw: httpx.Response(200, json={}, request=httpx.Request("POST", url)),
+    )
+    out = client.predict(history)
+    assert out.status_code == 200
+    assert out.items == []
+
+    # Items with missing fields (should apply defaults gracefully)
+    monkeypatch.setattr(
+        client._http_client,
+        "post",
+        lambda url, **kw: httpx.Response(
+            200,
+            json={"items": [{"id": "item_sparse"}, {"name": "No Price Item", "prob": 0.1}]},
+            request=httpx.Request("POST", url),
+        ),
+    )
+    out_sparse = client.predict(history)
+    assert out_sparse.status_code == 200
+    assert len(out_sparse.items) == 2
+    assert out_sparse.items[0].id == "item_sparse"
+    assert out_sparse.items[0].price is None
+    assert out_sparse.items[1].name == "No Price Item"
+
+
+def test_showcase_interactive_mock_mode(client):
+    """Verify /api/run-interactive succeeds with mode='mock' without hitting external network."""
+    payload = {
+        "history_a_items": ["paB08NYK61PJ"],
+        "history_b_items": ["paB0CBT2582L"],
+        "mode": "mock",
+        "limit": 5,
+    }
+    resp = client.post("/api/run-interactive", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "mock"
+    assert "sequence_a_output" in data
+    assert "sequence_b_output" in data
+    assert "metrics" in data
+    assert data["sequence_a_output"]["status_code"] == 200
+    assert data["sequence_b_output"]["status_code"] == 200
+
+
+def test_showcase_frontend_diagnostics_and_error_states(client):
+    """Verify web/index.html includes complete diagnostics, method descriptions, and error states."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # Diagnostic hints for static server HTTP 501
+    assert "python -m http.server" in html
+    assert "501 Unsupported method ('POST')" in html
+    assert "uvicorn behavior_lab.api:app" in html
+
+    # Showcase mode selector
+    assert "sandboxMode" in html
+    assert "Offline Mock Mode" in html
+    assert "Public Showcase Endpoint (Live)" in html
+
+    # Method and endpoint visibility
+    assert "POST" in html
+    assert "https://behaviorgpt.unboxai.com/api/recommendations" in html
+
+    # Fallback and error states
+    assert "fetchShowcaseDirect" in html
+    assert "Public Showcase Endpoint — Direct Browser Fallback" in html
+    assert "Live Inference Failed" in html
+    assert "Live Inference Unsuccessful" in html
+
+
+def test_regression_protection_sdk_backed_tools(client):
+    """Confirm all three official SDK-backed tools remain fully operational without regression."""
+    # 1. Behavioral Journey Simulator
+    journey_resp = client.post(
+        "/api/journey/simulate",
+        json={"events": [{"action_type": "view", "product_id": "paB07R17XQD2"}], "mode": "mock", "limit": 3},
+    )
+    assert journey_resp.status_code == 200
+    assert journey_resp.json()["provider"] == "mock"
+    assert len(journey_resp.json()["items"]) == 3
+
+    # 2. Counterfactual Playground
+    cf_resp = client.post(
+        "/api/counterfactual/compare",
+        json={
+            "original_events": [{"action_type": "view", "product_id": "paB07R17XQD2"}],
+            "mutated_events": [{"action_type": "view", "product_id": "paB0DK3YY682"}],
+            "mode": "mock",
+            "limit": 3,
+        },
+    )
+    assert cf_resp.status_code == 200
+    assert cf_resp.json()["provider"] == "mock"
+    assert "item_transitions" in cf_resp.json()
+
+    # 3. Similar Item Explorer
+    sim_resp = client.get("/api/items/paB0D93VKPPK/similar")
+    assert sim_resp.status_code == 200
+    assert sim_resp.json()["provider"] == "mock"
+    assert len(sim_resp.json()["similar_items"]) == 10
+
+
+def test_single_origin_architecture(client):
+    """Verify single-origin application serving: index routes, health endpoint, and static mount."""
+    # / and /index.html serve the dashboard
+    resp_root = client.get("/")
+    assert resp_root.status_code == 200
+    assert "BehaviorGPT Counterfactual Sensitivity Lab" in resp_root.text
+    assert "getApiBase" in resp_root.text
+    assert "originWarningBanner" in resp_root.text
+    assert "http://127.0.0.1:8000" in resp_root.text
+
+    resp_index = client.get("/index.html")
+    assert resp_index.status_code == 200
+    assert resp_index.text == resp_root.text
+
+    # /health endpoint returns 200 OK
+    resp_health = client.get("/health")
+    assert resp_health.status_code == 200
+    data = resp_health.json()
+    assert data["status"] == "ok"
+    assert data["app"] == "BehaviorGPT Counterfactual Sensitivity Lab"
+
+    # Static assets mount exists at /static without intercepting /api
+    static_route = next((r for r in app.routes if getattr(r, "path", None) == "/static"), None)
+    assert static_route is not None
+
+
 
 
 

@@ -376,6 +376,18 @@
 </head>
 <body>
   <div class="container">
+    <!-- Dev Server Notice Banner: Shown only if accessed via a static dev server (e.g. port 5500) rather than port 8000 -->
+    <div id="originWarningBanner" style="display:none; background:rgba(210,153,34,0.18); border:1px solid var(--warning); border-radius:6px; padding:12px 16px; margin-bottom:16px; font-size:0.88rem; color:var(--text-heading);">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div>
+          <b>Single-Origin Architecture Notice:</b> This dashboard was loaded via a static preview server (<code id="currentOriginLabel"></code>).
+          The unified single-origin application is hosted at <a href="http://127.0.0.1:8000" style="color:var(--accent); font-weight:600; text-decoration:underline;">http://127.0.0.1:8000</a>.
+          All API requests have been automatically routed to <code>http://127.0.0.1:8000</code> to prevent HTTP 501 errors on static servers.
+        </div>
+        <a href="http://127.0.0.1:8000" class="btn-sm" style="background:var(--accent); color:#0d1117; font-weight:600; text-decoration:none; padding:4px 10px; border-radius:4px; white-space:nowrap;">Open on Port 8000 &rarr;</a>
+      </div>
+    </div>
+
     <header>
       <div>
         <h1>BehaviorGPT Counterfactual Sensitivity Lab</h1>
@@ -971,6 +983,20 @@ Measurements:
           The interactive sandbox sends fresh requests to the public showcase endpoint (<code>https://behaviorgpt.unboxai.com/api/recommendations</code>) to observe real-time model predictions and calculated sensitivity metrics. Historical predictions in the Paired Case Inspector are loaded from the saved experiment records. Note: This interface interfaces with Unbox AI's public showcase endpoint and does not use the official authenticated BehaviorGPT SDK gateway.
         </p>
 
+        <!-- Mode & Diagnostic Bar -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:var(--card-subtle); border:1px solid var(--border); border-radius:6px; padding:10px 14px; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <label style="font-weight:600; font-size:0.85rem; margin-bottom:0;">Execution Mode:</label>
+            <select id="sandboxMode" style="background:#0d1117; border:1px solid var(--border); color:#fff; padding:5px 8px; border-radius:4px; font-size:0.85rem;">
+              <option value="live" selected>Public Showcase Endpoint (Live)</option>
+              <option value="mock">Offline Mock Mode</option>
+            </select>
+          </div>
+          <div style="font-size:0.8rem; color:var(--text-muted); font-family:var(--mono);">
+            Target: <code>POST /api/recommendations</code> (Unauthenticated Showcase)
+          </div>
+        </div>
+
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
           <div>
             <label style="font-weight:600; font-size:0.85rem;">Sequence A Item IDs (one per line):</label>
@@ -1021,7 +1047,33 @@ paB09DBFS1Y5</textarea>
         .replace(/'/g, '&#39;');
     }
 
+    // --- Origin Resolver: Ensures relative API requests reach FastAPI directly ---
+    function getApiBase() {
+      if (typeof window !== 'undefined' && window.location) {
+        const port = window.location.port;
+        const host = window.location.hostname;
+        // If served from a static dev server (e.g. port 5500) rather than FastAPI on 8000,
+        // route requests directly to FastAPI backend at http://127.0.0.1:8000
+        if ((host === '127.0.0.1' || host === 'localhost') && port && port !== '8000') {
+          return 'http://127.0.0.1:8000';
+        }
+      }
+      return '';
+    }
+
     async function initDashboard() {
+      // Check if accessed via non-8000 development server (e.g. port 5500)
+      if (typeof window !== 'undefined' && window.location) {
+        const port = window.location.port;
+        const host = window.location.hostname;
+        if ((host === '127.0.0.1' || host === 'localhost') && port && port !== '8000') {
+          const banner = document.getElementById('originWarningBanner');
+          const label = document.getElementById('currentOriginLabel');
+          if (banner) banner.style.display = 'block';
+          if (label) label.textContent = window.location.origin;
+        }
+      }
+
       await loadCatalogData();
       await loadSummaryStats();
       await loadHistoricalCases();
@@ -1033,7 +1085,7 @@ paB09DBFS1Y5</textarea>
     // --- Catalog Metadata Loader ---
     async function loadCatalogData() {
       try {
-        const res = await fetch('/api/catalog/items');
+        const res = await fetch(getApiBase() + '/api/catalog/items');
         if (res.ok) {
           const data = await res.json();
           catalogItems = data.items || [];
@@ -1206,7 +1258,7 @@ paB09DBFS1Y5</textarea>
       predList.innerHTML = '<div style="color:var(--accent); font-size:0.9rem; padding:12px;">Querying BehaviorGPT via asynchronous SDK adapter...</div>';
 
       try {
-        const res = await fetch('/api/journey/simulate', {
+        const res = await fetch(getApiBase() + '/api/journey/simulate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1402,7 +1454,7 @@ paB09DBFS1Y5</textarea>
       resContainer.style.display = 'block';
 
       try {
-        const res = await fetch('/api/counterfactual/compare', {
+        const res = await fetch(getApiBase() + '/api/counterfactual/compare', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1517,7 +1569,7 @@ paB09DBFS1Y5</textarea>
       list.innerHTML = '<div style="color:var(--purple); font-size:0.9rem; padding:12px;">Querying official SDK similar_items()...</div>';
 
       try {
-        const res = await fetch(`/api/items/${encodeURIComponent(itemId)}/similar?limit=${limit}&catalog_id=${encodeURIComponent(catalogId)}&mode=sdk`);
+        const res = await fetch(`${getApiBase()}/api/items/${encodeURIComponent(itemId)}/similar?limit=${limit}&catalog_id=${encodeURIComponent(catalogId)}&mode=sdk`);
         if (!res.ok) {
           let errDetail = `HTTP ${res.status}`;
           try {
@@ -1552,7 +1604,7 @@ paB09DBFS1Y5</textarea>
     // --- Historical Benchmark Loaders ---
     async function loadSummaryStats() {
       try {
-        const summaryRes = await fetch('/api/summary');
+        const summaryRes = await fetch(getApiBase() + '/api/summary');
         if (summaryRes.ok) {
           const summary = await summaryRes.json();
           document.getElementById('statTotal').textContent = summary.total_cases || '40';
@@ -1572,7 +1624,7 @@ paB09DBFS1Y5</textarea>
 
     async function loadHistoricalCases() {
       try {
-        const res = await fetch('/api/cases');
+        const res = await fetch(getApiBase() + '/api/cases');
         if (!res.ok) return;
         const data = await res.json();
         const select = document.getElementById('caseSelect');
@@ -1593,7 +1645,7 @@ paB09DBFS1Y5</textarea>
 
     async function loadCaseDetail(caseId) {
       try {
-        const res = await fetch(`/api/cases/${caseId}`);
+        const res = await fetch(`${getApiBase()}/api/cases/${caseId}`);
         const data = await res.json();
         const r = data.result;
 
@@ -1669,12 +1721,87 @@ paB09DBFS1Y5</textarea>
       });
     }
 
-    // --- Showcase Sandbox Function (Preserved for backward test compliance) ---
+    // --- Showcase Sandbox Function (Preserved for backward test compliance & enhanced resilience) ---
+    async function fetchShowcaseDirect(seqA, seqB, limit) {
+      const sessionStart = new Date().toISOString();
+      async function callSingle(items) {
+        const payload = {
+          history: [{
+            type: 'default',
+            start_time: sessionStart,
+            domains: { market: 'US' },
+            events: items.map((pid, idx) => ({
+              type: 'viewItem',
+              product: pid,
+              offset_ms: idx * 1000
+            }))
+          }],
+          limit: limit
+        };
+        const r = await fetch('https://behaviorgpt.unboxai.com/api/recommendations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!r.ok) {
+          throw new Error(`Public showcase HTTP ${r.status}: ${r.statusText}`);
+        }
+        const d = await r.json();
+        const rawItems = d.items || [];
+        return {
+          status_code: 200,
+          error_message: null,
+          items: rawItems.map((it, idx) => ({
+            id: it.id || `item_${idx+1}`,
+            name: it.name || 'Unknown Product',
+            score: it.prob !== undefined && it.prob !== null ? it.prob : 1.0 / (idx + 1),
+            prob: it.prob,
+            rank: idx + 1,
+            brand: it.brand || '',
+            category: it.category || '',
+            price: it.price !== undefined && it.price !== null ? it.price : null
+          }))
+        };
+      }
+
+      const [outA, outB] = await Promise.all([callSingle(seqA), callSingle(seqB)]);
+      const top1A = outA.items[0]?.id;
+      const top1B = outB.items[0]?.id;
+      const setA = new Set(outA.items.map(it => it.id));
+      const setB = new Set(outB.items.map(it => it.id));
+      const intersection = new Set([...setA].filter(x => setB.has(x)));
+      const union = new Set([...setA, ...setB]);
+      const jaccard = union.size > 0 ? intersection.size / union.size : 0.0;
+
+      let totalDisp = 0;
+      let sharedCount = 0;
+      outA.items.forEach(itA => {
+        const match = outB.items.find(itB => itB.id === itA.id);
+        if (match) {
+          totalDisp += Math.abs(itA.rank - match.rank);
+          sharedCount++;
+        }
+      });
+      const avgDisp = sharedCount > 0 ? totalDisp / sharedCount : null;
+
+      return {
+        provider: 'public_showcase_direct',
+        sequence_a_output: outA,
+        sequence_b_output: outB,
+        metrics: {
+          top1_changed: top1A !== top1B,
+          jaccard_top5: jaccard,
+          rank_displacement_avg: avgDisp
+        }
+      };
+    }
+
     async function runSandboxTest() {
       const resContainer = document.getElementById('sandboxResults');
       resContainer.innerHTML = '<div style="color:var(--accent); font-size:0.9rem;">Submitting both sequences to BehaviorGPT public showcase endpoint (fresh live query)...</div>';
       const seqA = document.getElementById('liveSeqA').value.split('\n').map(s => s.trim()).filter(Boolean);
       const seqB = document.getElementById('liveSeqB').value.split('\n').map(s => s.trim()).filter(Boolean);
+      const mode = document.getElementById('sandboxMode') ? document.getElementById('sandboxMode').value : 'live';
 
       if (seqA.length === 0 || seqB.length === 0) {
         resContainer.innerHTML = `
@@ -1687,14 +1814,27 @@ paB09DBFS1Y5</textarea>
       }
 
       try {
-        const res = await fetch('/api/run-interactive', {
+        let data = null;
+        let isDirectFallback = false;
+
+        const res = await fetch(getApiBase() + '/api/run-interactive', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ history_a_items: seqA, history_b_items: seqB, limit: 5 })
+          body: JSON.stringify({ history_a_items: seqA, history_b_items: seqB, limit: 5, mode: mode })
         });
 
-        // 1. Check res.ok before processing response
-        if (!res.ok) {
+        // If local static server returns 501 Unsupported method ('POST') or 404, attempt direct browser CORS fetch
+        if ((res.status === 501 || res.status === 404) && mode === 'live') {
+          try {
+            data = await fetchShowcaseDirect(seqA, seqB, 5);
+            isDirectFallback = true;
+          } catch (directErr) {
+            console.warn('Direct browser fetch fallback failed:', directErr);
+          }
+        }
+
+        // 1. Check res.ok before processing response (if not recovered via direct browser fetch)
+        if (!data && !res.ok) {
           let errDetail = `HTTP ${res.status}: ${res.statusText || 'Inference Request Failed'}`;
           try {
             const errJson = await res.json();
@@ -1703,13 +1843,27 @@ paB09DBFS1Y5</textarea>
             }
           } catch (_) {}
 
+          let staticHint = '';
+          if (res.status === 501) {
+            staticHint = `
+              <div style="margin-top:10px; padding:8px 12px; background:rgba(210,153,34,0.12); border:1px solid var(--warning); border-radius:4px; font-size:0.82rem; color:var(--text);">
+                <b>Diagnostic Root Cause:</b> Static web server detected (Python's <code>python -m http.server</code> only implements GET/HEAD and returns <code>HTTP 501 Unsupported method ('POST')</code> for API routes).<br/>
+                <b>Solution:</b> Launch the application backend with: <code>uvicorn behavior_lab.api:app --port 8000</code>.
+              </div>
+            `;
+          }
+
           resContainer.innerHTML = `
             <div style="background:rgba(248, 81, 73, 0.1); border:1px solid var(--danger); border-radius:6px; padding:14px; margin-top:12px; color:var(--text-heading);">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <span style="font-weight:600; color:var(--danger);">Live Inference Failed (HTTP ${res.status})</span>
-                <span class="badge" style="background:#21262d; color:var(--danger); border-color:var(--danger);">Error</span>
+                <span class="badge" style="background:#21262d; color:var(--danger); border-color:var(--danger);">HTTP ${res.status}</span>
+              </div>
+              <div style="font-size:0.85rem; color:var(--text-muted); font-family:var(--mono); margin-bottom:6px;">
+                Method: POST | Endpoint: /api/run-interactive &rarr; https://behaviorgpt.unboxai.com/api/recommendations
               </div>
               <div style="font-size:0.88rem; color:var(--text); line-height:1.4;">${escapeHtml(errDetail)}</div>
+              ${staticHint}
               <div style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
                 The public showcase endpoint returned an error. No sensitivity metrics were calculated.
               </div>
@@ -1718,7 +1872,9 @@ paB09DBFS1Y5</textarea>
           return;
         }
 
-        const data = await res.json();
+        if (!data) {
+          data = await res.json();
+        }
 
         // 2. Check both sequence outputs for errors and unsuccessful status codes
         const outA = data.sequence_a_output;
@@ -1740,6 +1896,9 @@ paB09DBFS1Y5</textarea>
                 <span style="font-weight:600; color:var(--danger);">Live Inference Unsuccessful</span>
                 <span class="badge" style="background:#21262d; color:var(--danger); border-color:var(--danger);">Error</span>
               </div>
+              <div style="font-size:0.85rem; color:var(--text-muted); font-family:var(--mono); margin-bottom:6px;">
+                Method: POST | Target: https://behaviorgpt.unboxai.com/api/recommendations
+              </div>
               <div style="font-size:0.88rem; color:var(--text);">${escapeHtml(combinedMsg)}</div>
               <div style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
                 Upstream model failed. Misleading zero-valued metrics have been suppressed.
@@ -1750,15 +1909,22 @@ paB09DBFS1Y5</textarea>
         }
 
         // 3. On success, display returned recommendations and metrics normally
+        const fallbackBadge = isDirectFallback ? `
+          <div style="margin-bottom:10px; padding:6px 10px; background:rgba(88,166,255,0.1); border:1px solid var(--accent); border-radius:4px; font-size:0.8rem; color:var(--text);">
+            <b>Static Server Detected (501 bypass):</b> Direct browser CORS query to <code>https://behaviorgpt.unboxai.com/api/recommendations</code> succeeded.
+          </div>
+        ` : '';
+
         resContainer.innerHTML = `
           <div style="background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:14px; margin-top:12px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:8px;">
-              <span style="font-weight:600; color:var(--text-heading);">Live Query Response (Public Showcase Endpoint):</span>
+              <span style="font-weight:600; color:var(--text-heading);">Live Query Response (${isDirectFallback ? 'Public Showcase Endpoint — Direct Browser Fallback' : 'Public Showcase Endpoint'}):</span>
               <span class="badge badge-live" style="font-size:0.75rem;">
                 <span class="pulse-dot"></span>
                 Fresh Live Query
               </span>
             </div>
+            ${fallbackBadge}
             <div style="display:flex; gap:16px; margin-bottom:12px; font-size:0.85rem; flex-wrap:wrap;">
               <span>Top-1 Changed: <b style="color:${metrics.top1_changed ? 'var(--warning)' : 'var(--success)'};">${metrics.top1_changed ? 'YES (Flipped)' : 'NO (Preserved)'}</b></span>
               <span>Jaccard @ 5: <b>${(metrics.jaccard_top5 * 100).toFixed(1)}%</b></span>
@@ -1792,6 +1958,9 @@ paB09DBFS1Y5</textarea>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <span style="font-weight:600; color:var(--danger);">Client Connection Error</span>
               <span class="badge" style="background:#21262d; color:var(--danger); border-color:var(--danger);">Error</span>
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-muted); font-family:var(--mono); margin-bottom:6px;">
+              Method: POST | Endpoint: /api/run-interactive
             </div>
             <div style="font-size:0.88rem; color:var(--text);">${escapeHtml(String(err))}</div>
           </div>
