@@ -521,9 +521,8 @@
             <div>
               <label>Catalog:</label>
               <select id="journeyCatalog">
-                <option value="retail_catalog_500k">retail_catalog_500k</option>
-                <option value="hm_fashion">hm_fashion</option>
-                <option value="amazon_sample">amazon_sample</option>
+                <option value="retail_catalog_500k" selected>retail_catalog_500k (Verified Retail Catalog)</option>
+                <option value="hm_fashion">hm_fashion (H&amp;M)</option>
               </select>
             </div>
             <div>
@@ -721,9 +720,8 @@
           <div>
             <label>Catalog:</label>
             <select id="similarCatalog">
-              <option value="retail_catalog_500k">retail_catalog_500k</option>
-              <option value="hm_fashion">hm_fashion</option>
-              <option value="amazon_sample">amazon_sample</option>
+              <option value="retail_catalog_500k" selected>retail_catalog_500k (Verified Retail Catalog)</option>
+              <option value="hm_fashion">hm_fashion (H&amp;M)</option>
             </select>
           </div>
           <div>
@@ -1255,7 +1253,10 @@ paB09DBFS1Y5</textarea>
       const resContainer = document.getElementById('journeyResultsContainer');
       resContainer.style.display = 'block';
       const predList = document.getElementById('journeyPredList');
-      predList.innerHTML = '<div style="color:var(--accent); font-size:0.9rem; padding:12px;">Querying BehaviorGPT via asynchronous SDK adapter...</div>';
+      let modeText = 'official asynchronous SDK adapter';
+      if (mode === 'live') modeText = 'public showcase endpoint';
+      else if (mode === 'mock') modeText = 'offline mock engine';
+      predList.innerHTML = `<div style="color:var(--accent); font-size:0.9rem; padding:12px;">Querying BehaviorGPT via ${modeText}...</div>`;
 
       try {
         const res = await fetch(getApiBase() + '/api/journey/simulate', {

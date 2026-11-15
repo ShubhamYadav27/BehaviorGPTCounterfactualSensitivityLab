@@ -120,7 +120,7 @@ def _events_to_history(
         atype_str = (ev.action_type or "view").lower().strip()
         if atype_str in ("view", "view_item", "viewitem"):
             act_type = ActionType.VIEW_ITEM
-        elif atype_str in ("order", "purchase"):
+        elif atype_str in ("order", "purchase", "buy", "buy_item", "buyitem"):
             act_type = ActionType.ORDER
         elif atype_str in ("search", "query"):
             act_type = ActionType.SEARCH
@@ -278,6 +278,13 @@ async def simulate_journey(req: JourneySimulateRequest):
     if not req.events:
         raise HTTPException(status_code=400, detail="Journey must contain at least 1 event.")
 
+    catalog_clean = (req.catalog_id or "retail_catalog_500k").strip()
+    if catalog_clean not in {"retail_catalog_500k", "hm_fashion"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Catalog '{req.catalog_id}' is not supported. Verified catalog is 'retail_catalog_500k'.",
+        )
+
     for i, ev in enumerate(req.events):
         atype = (ev.action_type or "view").lower().strip()
         if atype in ("search", "query") and not (ev.query and ev.query.strip()):
@@ -370,6 +377,13 @@ async def compare_counterfactual(req: CounterfactualCompareRequest):
         raise HTTPException(
             status_code=400,
             detail="Both original and counterfactual sequences must contain at least 1 event.",
+        )
+
+    catalog_clean = (req.catalog_id or "retail_catalog_500k").strip()
+    if catalog_clean not in {"retail_catalog_500k", "hm_fashion"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Catalog '{req.catalog_id}' is not supported. Supported verified catalog is 'retail_catalog_500k'.",
         )
 
     for i, ev in enumerate(req.original_events):
@@ -526,6 +540,13 @@ async def _resolve_similar_items(
 ) -> Dict[str, Any]:
     if not item_id or not item_id.strip():
         raise HTTPException(status_code=400, detail="item_id is required.")
+
+    cat_clean = (catalog_id or "retail_catalog_500k").strip()
+    if cat_clean not in {"retail_catalog_500k", "hm_fashion"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Catalog '{catalog_id}' is not supported. Supported verified catalog is 'retail_catalog_500k'.",
+        )
 
     clean_id = item_id.strip()
 

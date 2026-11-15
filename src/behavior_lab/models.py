@@ -42,7 +42,7 @@ class BehavioralAction(BaseModel):
         elif self.action_type == ActionType.ADD_TO_CART:
             return {"type": "addToCart", "product": self.product_id or ""}
         elif self.action_type == ActionType.ORDER:
-            return {"type": "order", "product": self.product_id or ""}
+            return {"type": "buyItem", "product": self.product_id or ""}
         else:
             return {"type": "viewItem", "product": self.product_id or ""}
 

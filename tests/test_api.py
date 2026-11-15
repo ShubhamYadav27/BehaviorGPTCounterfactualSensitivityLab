@@ -467,6 +467,26 @@ def test_journey_simulate_validation(client):
     )
     assert resp.status_code == 400
 
+    # Unsupported catalog rejection
+    resp = client.post(
+        "/api/journey/simulate",
+        json={
+            "events": [{"action_type": "view", "product_id": "paB07R17XQD2"}],
+            "catalog_id": "amazon_sample",
+        },
+    )
+    assert resp.status_code == 400
+    assert "not supported" in resp.json()["detail"]
+
+
+def test_journey_simulate_multi_action_types_and_order_wire():
+    """Verify ActionType.ORDER maps to buyItem in wire format and accepts multiple orders."""
+    from behavior_lab.models import BehavioralAction, ActionType
+    action = BehavioralAction(action_id="act_1", action_type=ActionType.ORDER, product_id="paB07R17XQD2")
+    wire = action.to_wire_dict()
+    assert wire["type"] == "buyItem"
+    assert wire["product"] == "paB07R17XQD2"
+
 
 def test_journey_simulate_mock_mode(client):
     """POST /api/journey/simulate succeeds with mock provider."""
