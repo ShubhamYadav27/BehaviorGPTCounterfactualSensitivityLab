@@ -2,12 +2,6 @@
 
 > An empirical research workbench and interactive decision explorer investigating sequential counterfactual sensitivity, representation dynamics, and nearest-neighbor item retrieval using the official Unbox AI **BehaviorGPT** foundation model SDK.
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![BehaviorGPT SDK](https://img.shields.io/badge/BehaviorGPT%20SDK-v0.11.0-blueviolet.svg)](https://github.com/Unbox-AI/behaviorgpt)
-[![Tests: 69 Passed](https://img.shields.io/badge/tests-69%20passed-success.svg)](tests/)
-[![Architecture: Single--Origin](https://img.shields.io/badge/architecture-single--origin-orange.svg)](#5-system-architecture)
-
 ---
 
 ## Table of Contents
